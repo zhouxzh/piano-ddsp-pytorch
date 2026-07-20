@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# DDSP-Piano datasets and generated training artifacts
+/data/*
+!/data/README.md
+!/data/.gitkeep
+/cache/*
+!/cache/.gitkeep
+/runs/*
+!/runs/.gitkeep
+*.pt
+*.npy
+*.npz
+*.wav
+*.mid
+*.midi
