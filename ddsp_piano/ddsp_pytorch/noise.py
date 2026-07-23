@@ -12,6 +12,8 @@ class Noise(nn.Module):
         super(Noise, self).__init__()
     def forward(self, harmonic, noise_param):
         noise_param = scale_function(noise_param)
-        noise = torch.rand_like(harmonic).to(noise_param) * 2 - 1 # [-1, 1]
+        # DDSP-Piano and MIDI-DDSP use a separate white-noise realization for
+        # every synthesized voice in both training and inference.
+        noise = torch.rand_like(harmonic) * 2 - 1
         noise = frequency_filter(noise, noise_param)
         return noise

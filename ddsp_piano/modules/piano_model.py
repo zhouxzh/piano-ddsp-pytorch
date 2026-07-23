@@ -79,64 +79,105 @@ class PianoModel(nn.Module):
                                                params["f0_hz"])
         return harmonic_signal
 
+    def predict_controls(self, conditioning, pedal, piano_model):
+        """Return fixed-shape neural controls before non-exportable DSP synthesis."""
+        z, global_inharm, global_detuning = self.z_encoder(piano_model)
+        context = self.context_network(conditioning, pedal, z)
+        reverb_ir = self.reverb_model(piano_model.unsqueeze(-1))
+
+        conditioning, context, global_inharm, global_detuning = self.parallelizer(
+            conditioning, context, global_inharm, global_detuning
+        )
+        extended_pitch = self.note_release(conditioning)
+        inharm_coef = self.inharm_model(extended_pitch, global_inharm)
+        f0_hz = self.detuner(extended_pitch, global_detuning)
+        amplitudes, harmonic_distribution, magnitudes = self.monophonic_network(
+            conditioning, extended_pitch, context
+        )
+
+        return (
+            self.parallelizer.unparallelize_feature(amplitudes),
+            self.parallelizer.unparallelize_feature(harmonic_distribution),
+            self.parallelizer.unparallelize_feature(inharm_coef),
+            self.parallelizer.unparallelize_feature(f0_hz),
+            self.parallelizer.unparallelize_feature(magnitudes),
+            reverb_ir,
+        )
+
+    def predict_controls_stateful(
+        self,
+        conditioning,
+        pedal,
+        piano_model,
+        extended_pitch,
+        context_state,
+        monophonic_state,
+    ):
+        """Predict one or more control frames while carrying explicit GRU state.
+
+        ``extended_pitch`` is maintained by the deployment host so the ONNX graph
+        does not unroll the release-state loop for every exported frame.
+        """
+        z, global_inharm, global_detuning = self.z_encoder(piano_model)
+        context, next_context_state = self.context_network.forward_stateful(
+            conditioning, pedal, z, context_state
+        )
+        reverb_ir = self.reverb_model(piano_model.unsqueeze(-1))
+
+        conditioning, context, global_inharm, global_detuning = self.parallelizer(
+            conditioning, context, global_inharm, global_detuning
+        )
+        extended_pitch = self.parallelizer.parallelize_series_operation(extended_pitch)
+        inharm_coef = self.inharm_model(extended_pitch, global_inharm)
+        f0_hz = self.detuner(extended_pitch, global_detuning)
+        amplitudes, harmonic_distribution, magnitudes, next_monophonic_state = (
+            self.monophonic_network.forward_stateful(
+                conditioning, extended_pitch, context, monophonic_state
+            )
+        )
+
+        return (
+            self.parallelizer.unparallelize_feature(amplitudes),
+            self.parallelizer.unparallelize_feature(harmonic_distribution),
+            self.parallelizer.unparallelize_feature(inharm_coef),
+            self.parallelizer.unparallelize_feature(f0_hz),
+            self.parallelizer.unparallelize_feature(magnitudes),
+            reverb_ir,
+            next_context_state,
+            next_monophonic_state,
+        )
+
     def forward(
         self,
         conditioning,
-        pedal, 
+        pedal,
         piano_model):
 
-        # compute global feature 
-        if self.z_encoder is not None:
-            z, global_inharm, global_detuning = self.z_encoder(piano_model)
-        if self.context_network is not None:
-            context = self.context_network(conditioning, pedal, z)
-        if self.reverb_model is not None:
-            reverb_ir = self.reverb_model(piano_model.unsqueeze(-1))
+        amplitudes_all, harmonics_all, inharm_all, f0_all, magnitudes_all, reverb_ir = self.predict_controls(
+            conditioning, pedal, piano_model
+        )
 
-        # parallel 
-        if self.parallelizer is not None:
-            conditioning, context, global_inharm, global_detuning = self.parallelizer(conditioning, context, global_inharm, global_detuning)
-        
-        # compute monophonic feature 
-        if self.note_release is not None:
-            extended_pitch = self.note_release(conditioning)
-
-        if self.inharm_model is not None:
-            inharm_coef = self.inharm_model(extended_pitch, global_inharm)
-        
-        if self.detuner is not None:
-            f0_hz = self.detuner(extended_pitch, global_detuning)
-        #print('f0_hz shape: ', f0_hz.shape)
-        if self.monophonic_network is not None:
-            amplitudes, harmonic_distribution, magnitudes = self.monophonic_network(conditioning, extended_pitch, context)
-
-
-        # unparallel 
-        # Disentangle polyphony and batch axis
-        if self.parallelizer is not None:
-            features = self.parallelizer(
-                f0_hz=f0_hz, 
-                inharm_coef=inharm_coef, 
-                amplitudes=amplitudes, 
-                harmonic_distribution=harmonic_distribution, 
-                magnitudes=magnitudes, 
-                parallelize=False)
-
-        
-        ########### DDSP
-        #print('before f0_hz shape: ', f0_hz.shape)
-        amplitudes, harmonic_distribution, inharm_coef, f0_hz, magnitudes = features[f"amplitudes_0"], features[f"harmonic_distribution_0"], features[f"inharm_coef_0"], features[f"f0_hz_0"], features[f"magnitudes_0"]
-        #print('after f0_hz shape: ', f0_hz.shape)
+        amplitudes = amplitudes_all[0]
+        harmonic_distribution = harmonics_all[0]
+        inharm_coef = inharm_all[0]
+        f0_hz = f0_all[0]
+        magnitudes = magnitudes_all[0]
         harmonic_part = self.synthesize_harmonic_part(self.harmonic_synthesizer, amplitudes, harmonic_distribution, inharm_coef, f0_hz) 
         noise_part = self.noise_synthesizer(harmonic_part, magnitudes)
         signal = harmonic_part + noise_part
         for i in range(1, self.n_synths):
-            amplitudes, harmonic_distribution, inharm_coef, f0_hz, magnitudes = features[f"amplitudes_{i}"], features[f"harmonic_distribution_{i}"], features[f"inharm_coef_{i}"], features[f"f0_hz_{i}"], features[f"magnitudes_{i}"]
+            amplitudes = amplitudes_all[i]
+            harmonic_distribution = harmonics_all[i]
+            inharm_coef = inharm_all[i]
+            f0_hz = f0_all[i]
+            magnitudes = magnitudes_all[i]
             sub_harmonic = self.synthesize_harmonic_part(self.harmonic_synthesizer, amplitudes, harmonic_distribution, inharm_coef, f0_hz)
             sub_noise = self.noise_synthesizer(sub_harmonic, magnitudes)
             signal += (sub_harmonic + sub_noise)
         
-        non_ir_signal = signal.detach()
+        # Keep the dry branch connected to the graph so the training objective
+        # can explicitly protect the oscillator quality from an over-large IR.
+        non_ir_signal = signal
         signal = self.reverb_module(signal, reverb_ir)
         return signal, reverb_ir, non_ir_signal
 

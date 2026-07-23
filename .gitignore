@@ -217,14 +217,20 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# DDSP-Piano datasets and generated training artifacts
+# DDSP-Piano local datasets and generated training artifacts.
+# Store each dataset in its own data/<dataset-name>/ directory. Dataset contents
+# are never committed; keep only this directory's README and placeholder file.
 /data/*
-!/data/README.md
 !/data/.gitkeep
 /cache/*
 !/cache/.gitkeep
 /runs/*
 !/runs/.gitkeep
+/exports/
+/references/
+/_upstream/
+/.download-state/
+/.training-state/
 *.pt
 *.npy
 *.npz

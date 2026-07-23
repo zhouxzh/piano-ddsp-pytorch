@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from ddsp_piano.default_model import get_model
+from ddsp_piano.default_model import get_model, get_v2_model
 from ddsp_piano.maestro import MaestroSegmentDataset, PreprocessConfig, prepare_split
 from ddsp_piano.modules.loss import HybridLoss
 
@@ -23,9 +23,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--maestro-root", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path, default=Path("cache"))
     parser.add_argument("--experiment-dir", type=Path, default=Path("runs/piano_16k"))
+    parser.add_argument("--model-variant", choices=("current", "v2"), default="current")
     parser.add_argument("--prepare", action="store_true", help="Build missing track caches before training")
     parser.add_argument("--prepare-only", action="store_true", help="Build caches then exit")
     parser.add_argument("--prepare-splits", default="train,validation")
+    parser.add_argument("--prepare-workers", type=int, default=4)
     parser.add_argument("--limit-tracks", type=int, help="Limit tracks for a smoke run")
     parser.add_argument("--sample-rate", type=int, default=16_000)
     parser.add_argument("--frame-rate", type=int, default=250)
@@ -42,8 +44,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto", help="auto, cuda, cuda:N, or cpu")
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--grad-clip", type=float, default=1.0)
+    parser.add_argument("--dry-loss-weight", type=float, default=0.7)
+    parser.add_argument("--wet-loss-weight", type=float, default=0.3)
+    parser.add_argument("--reverb-regularizer-weight", type=float, default=0.05)
     parser.add_argument("--save-every", type=int, default=1)
     parser.add_argument("--resume", type=Path)
+    parser.add_argument("--weights", type=Path, help="Load model weights only, for phase changes")
     parser.add_argument("--seed", type=int, default=20260720)
     return parser.parse_args()
 
@@ -95,16 +101,19 @@ def run_validation(
 ) -> float:
     model.eval()
     losses: list[float] = []
-    autocast = torch.cuda.amp.autocast if device.type == "cuda" else nullcontext
+    autocast = torch.amp.autocast if device.type == "cuda" else nullcontext
     with torch.no_grad():
         for batch_index, batch in enumerate(loader):
             if max_batches and batch_index >= max_batches:
                 break
             audio, conditioning, pedal, piano_model = move_batch(batch, device)
-            with autocast(enabled=amp_enabled) if device.type == "cuda" else autocast():
-                signal, reverb_ir, _ = model(conditioning, pedal, piano_model)
+            with autocast("cuda", enabled=amp_enabled) if device.type == "cuda" else autocast():
+                signal, reverb_ir, dry_signal = model(conditioning, pedal, piano_model)
                 signal = signal[..., : audio.shape[-1]]
-                loss, _, _ = loss_fn(signal, audio, reverb_ir)
+                dry_signal = dry_signal[..., : audio.shape[-1]]
+                loss, _, _, _ = loss_fn.components(
+                    signal, audio, reverb_ir, dry_pred=dry_signal
+                )
             losses.append(float(loss.detach().cpu()))
     if not losses:
         raise RuntimeError("Validation loader produced no batches")
@@ -115,7 +124,7 @@ def save_checkpoint(
     destination: Path,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-    scaler: torch.cuda.amp.GradScaler,
+    scaler: torch.amp.GradScaler,
     epoch: int,
     global_step: int,
     best_validation: float,
@@ -123,23 +132,32 @@ def save_checkpoint(
     piano_models: list[int],
 ) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    serialized_args = {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in vars(args).items()
+    }
+    payload = {
+        "epoch": epoch,
+        "global_step": global_step,
+        "best_validation": best_validation,
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scaler": scaler.state_dict(),
+        "args": serialized_args,
+        "piano_models": piano_models,
+    }
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
     torch.save(
-        {
-            "epoch": epoch,
-            "global_step": global_step,
-            "best_validation": best_validation,
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "scaler": scaler.state_dict(),
-            "args": vars(args),
-            "piano_models": piano_models,
-        },
-        destination,
+        payload,
+        temporary,
     )
+    temporary.replace(destination)
 
 
 def main() -> int:
     args = parse_args()
+    if args.resume is not None and args.weights is not None:
+        raise ValueError("--resume and --weights are mutually exclusive")
     config = config_from_args(args)
     device = select_device(args.device)
     torch.manual_seed(args.seed)
@@ -151,8 +169,15 @@ def main() -> int:
     requested_splits = [value.strip() for value in args.prepare_splits.split(",") if value.strip()]
     if args.prepare or args.prepare_only:
         for split in requested_splits:
-            result = prepare_split(args.maestro_root, args.cache_dir, split, config, args.limit_tracks)
-            print(f"cache {split}: {result}")
+            result = prepare_split(
+                args.maestro_root,
+                args.cache_dir,
+                split,
+                config,
+                args.limit_tracks,
+                args.prepare_workers,
+            )
+            print(f"cache {split}: {result}", flush=True)
     if args.prepare_only:
         return 0
 
@@ -177,7 +202,8 @@ def main() -> int:
 
     train_loader = make_loader(train_dataset, args, shuffle=True)
     validation_loader = make_loader(validation_dataset, args, shuffle=False)
-    model = get_model(
+    model_builder = get_v2_model if args.model_variant == "v2" else get_model
+    model = model_builder(
         n_synths=config.max_polyphony,
         n_piano_models=len(train_dataset.piano_models),
         sample_rate=config.sample_rate,
@@ -189,26 +215,35 @@ def main() -> int:
         [2048, 1024, 512, 256, 128, 64],
         model.inharm_model,
         phase=args.phase == 1,
+        weight=args.reverb_regularizer_weight,
+        dry_weight=args.dry_loss_weight,
+        wet_weight=args.wet_loss_weight,
+        reverb_mode="fdn" if args.model_variant == "v2" else "ir",
     ).to(device)
     optimizer = torch.optim.Adam(
         (parameter for parameter in model.parameters() if parameter.requires_grad),
         lr=args.lr,
     )
     amp_enabled = bool(args.amp and device.type == "cuda")
-    scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
 
     start_epoch = 0
     global_step = 0
     best_validation = float("inf")
+    if args.weights is not None:
+        checkpoint = torch.load(args.weights, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model"])
+        global_step = int(checkpoint.get("global_step", 0))
+        print(f"loaded model weights from {args.weights} at step={global_step}", flush=True)
     if args.resume is not None:
-        checkpoint = torch.load(args.resume, map_location=device)
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         scaler.load_state_dict(checkpoint.get("scaler", {}))
         start_epoch = int(checkpoint["epoch"]) + 1
         global_step = int(checkpoint["global_step"])
         best_validation = float(checkpoint["best_validation"])
-        print(f"resumed {args.resume} at epoch={start_epoch} step={global_step}")
+        print(f"resumed {args.resume} at epoch={start_epoch} step={global_step}", flush=True)
 
     args.experiment_dir.mkdir(parents=True, exist_ok=True)
     (args.experiment_dir / "config.json").write_text(
@@ -216,11 +251,12 @@ def main() -> int:
         encoding="utf-8",
     )
     metrics_path = args.experiment_dir / "metrics.jsonl"
-    autocast = torch.cuda.amp.autocast if device.type == "cuda" else nullcontext
+    autocast = torch.amp.autocast if device.type == "cuda" else nullcontext
 
     print(
         f"device={device} train_segments={len(train_dataset)} "
-        f"validation_segments={len(validation_dataset)} piano_models={train_dataset.piano_models}"
+        f"validation_segments={len(validation_dataset)} piano_models={train_dataset.piano_models}",
+        flush=True,
     )
     for epoch in range(start_epoch, args.epochs):
         model.train()
@@ -230,10 +266,13 @@ def main() -> int:
                 break
             audio, conditioning, pedal, piano_model = move_batch(batch, device)
             optimizer.zero_grad(set_to_none=True)
-            with autocast(enabled=amp_enabled) if device.type == "cuda" else autocast():
-                signal, reverb_ir, _ = model(conditioning, pedal, piano_model)
+            with autocast("cuda", enabled=amp_enabled) if device.type == "cuda" else autocast():
+                signal, reverb_ir, dry_signal = model(conditioning, pedal, piano_model)
                 signal = signal[..., : audio.shape[-1]]
-                loss, spectral_loss, reverb_loss = loss_fn(signal, audio, reverb_ir)
+                dry_signal = dry_signal[..., : audio.shape[-1]]
+                loss, spectral_loss, reverb_loss, dry_loss = loss_fn.components(
+                    signal, audio, reverb_ir, dry_pred=dry_signal
+                )
             scaler.scale(loss).backward()
             if args.grad_clip > 0:
                 scaler.unscale_(optimizer)
@@ -245,8 +284,9 @@ def main() -> int:
             if global_step % 20 == 0:
                 print(
                     f"epoch={epoch + 1}/{args.epochs} step={global_step} "
-                    f"loss={loss.item():.5f} spectral={spectral_loss.item():.5f} "
-                    f"reverb={reverb_loss.item():.5f}"
+                    f"loss={loss.item():.5f} wet={spectral_loss.item():.5f} "
+                    f"dry={dry_loss.item():.5f} reverb={reverb_loss.item():.5f}",
+                    flush=True,
                 )
 
         validation_loss = run_validation(
@@ -266,19 +306,8 @@ def main() -> int:
         }
         with metrics_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(metrics) + "\n")
-        print(json.dumps(metrics))
+        print(json.dumps(metrics), flush=True)
 
-        save_checkpoint(
-            args.experiment_dir / "checkpoints" / "last.pt",
-            model,
-            optimizer,
-            scaler,
-            epoch,
-            global_step,
-            best_validation,
-            args,
-            train_dataset.piano_models,
-        )
         if validation_loss < best_validation:
             best_validation = validation_loss
             save_checkpoint(
@@ -292,6 +321,17 @@ def main() -> int:
                 args,
                 train_dataset.piano_models,
             )
+        save_checkpoint(
+            args.experiment_dir / "checkpoints" / "last.pt",
+            model,
+            optimizer,
+            scaler,
+            epoch,
+            global_step,
+            best_validation,
+            args,
+            train_dataset.piano_models,
+        )
         if args.save_every and (epoch + 1) % args.save_every == 0:
             save_checkpoint(
                 args.experiment_dir / "checkpoints" / f"epoch_{epoch + 1:04d}.pt",

@@ -7,10 +7,13 @@ from ddsp_piano.ddsp_pytorch.core import fft_convolve
 
 class Reverb(nn.Module):
     """ Convolutional (FIR) reverb """
-    def __init__(self):
+    def __init__(self, wet_gain: float = 1.0):
         """Takes neural network outputs directly as the impulse response.
         """
         super(Reverb, self).__init__()
+        if wet_gain < 0.0:
+            raise ValueError("wet_gain must be non-negative")
+        self.wet_gain = float(wet_gain)
     def mask_dry_ir(self, ir):
         """Set first impulse response to zero to mask the dry signal."""
         # Make IR 2-D [batch, ir_size].
@@ -41,4 +44,4 @@ class Reverb(nn.Module):
 
         ir = self.mask_dry_ir(ir)
         wet = fft_convolve(audio, ir, padding='same', delay_compensation=0)
-        return wet+audio
+        return audio + self.wet_gain * wet

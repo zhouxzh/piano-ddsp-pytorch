@@ -7,7 +7,7 @@ from torch.nn import functional as F
 
 def hz_to_midi(frequencies):
     """TF-compatible hz_to_midi function."""
-    notes = 12.0 * (logb(frequencies, 2.0) - logb(torch.tensor(440.0).float(), 2.0)) + 69.0
+    notes = 12.0 * (logb(frequencies, 2.0) - logb(frequencies.new_tensor(440.0), 2.0)) + 69.0
     # Map 0 Hz to MIDI 0 (Replace -inf MIDI with 0.)
     notes = F.relu(notes)
     #notes = notes.double()
@@ -92,6 +92,12 @@ def remove_above_nyquist(amplitudes, pitch, sample_rate):
     pitches = pitch * torch.arange(1, n_harm + 1).to(pitch)
     aa = (pitches < sample_rate / 2).float() + 1e-4
     return amplitudes * aa
+
+
+def remove_frequencies_above_nyquist(amplitudes, frequencies, sample_rate):
+    """Band-limit amplitudes when per-partial frequencies are already known."""
+    mask = (frequencies < sample_rate / 2).to(amplitudes.dtype) + 1e-4
+    return amplitudes * mask
 
 def scale_function(x):
     return 2 * torch.sigmoid(x)**(math.log(10)) + 1e-7
@@ -194,7 +200,10 @@ def fft_convolve(audio,
         number of impulse response frames is on the order of the audio size and
         not a multiple of the audio size.)
     """
-    #audio, impulse_response = tf_float32(audio), tf_float32(impulse_response)
+    # ComplexHalf FFT support is incomplete across CUDA and deployment
+    # backends. Keep frequency-domain DSP in float32 even under AMP.
+    audio = audio.to(torch.float32)
+    impulse_response = impulse_response.to(torch.float32)
 
     # Add a frame dimension to impulse response if it doesn't have one.
     #ir_shape = impulse_response.shape.as_list()
@@ -239,14 +248,15 @@ def fft_convolve(audio,
     # Pad and FFT the audio and impulse responses.
     fft_size = get_fft_size(frame_size, ir_size, power_of_2=True)
     
-    audio_fft = torch.fft.rfft(audio_frames, fft_size)
-
-    ir_fft = torch.fft.rfft(impulse_response, fft_size)
-    # Multiply the FFTs (same as convolution in time).
-    audio_ir_fft = torch.multiply(audio_fft, ir_fft)
-
-    # Take the IFFT to resynthesize audio.
-    audio_frames_out = torch.fft.irfft(audio_ir_fft)
+    with torch.autocast(device_type=audio.device.type, enabled=False):
+        audio_frames = audio_frames.to(torch.float32)
+        impulse_response = impulse_response.to(torch.float32)
+        audio_fft = torch.fft.rfft(audio_frames, fft_size)
+        ir_fft = torch.fft.rfft(impulse_response, fft_size)
+        # Multiply the FFTs (same as convolution in time).
+        audio_ir_fft = torch.multiply(audio_fft, ir_fft)
+        # Take the IFFT to resynthesize audio.
+        audio_frames_out = torch.fft.irfft(audio_ir_fft)
     #audio_out = torch.signal.overlap_and_add(audio_frames_out, hop_size)
     if frame_size!=audio_size:
         overlap_add_filter = torch.eye(
@@ -348,8 +358,10 @@ def frequency_impulse_response(
     """
     # Get the IR (zero-phase form).
     
+    magnitudes = magnitudes.to(torch.float32)
     magnitudes = torch.complex(magnitudes, torch.zeros_like(magnitudes))
-    impulse_response = torch.fft.irfft(magnitudes)
+    with torch.autocast(device_type=magnitudes.device.type, enabled=False):
+        impulse_response = torch.fft.irfft(magnitudes)
     #print('ir size: ', impulse_response.shape[-1])
     """ This means this?
     First: Initilize at fourier space, where real part equal magnitueds, complex part equal 0

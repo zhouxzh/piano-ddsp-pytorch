@@ -4,7 +4,20 @@ from torch.nn import functional as F
 import numpy as np
 
 class HybridLoss(nn.Module):
-    def __init__(self, n_ffts, inharm, phase, weight=0.01, loss_type='L1', l1_weight_of_inharm=0.1):
+    def __init__(
+        self,
+        n_ffts,
+        inharm,
+        phase,
+        weight=0.05,
+        loss_type='L1',
+        l1_weight_of_inharm=0.1,
+        dry_weight=0.7,
+        wet_weight=0.3,
+        peak_weight=0.01,
+        tail_weight=0.02,
+        reverb_mode='ir',
+    ):
         super().__init__()
         self.inharm = inharm
         self.phase = phase 
@@ -12,15 +25,48 @@ class HybridLoss(nn.Module):
         self.mssLoss = MSSLoss(n_ffts)
         self.reverb_l1_loss = ReverbRegularizer(weight, loss_type)
         self.l1_weight_of_inharm = l1_weight_of_inharm
+        self.dry_weight = float(dry_weight)
+        self.wet_weight = float(wet_weight)
+        self.peak_weight = float(peak_weight)
+        self.tail_weight = float(tail_weight)
+        self.reverb_mode = reverb_mode
+
+    def components(self, y_pred, y_true, reverb_ir=None, dry_pred=None):
+        """Return total, wet spectral, reverb, and dry spectral losses.
+
+        The dry branch is deliberately part of the objective so the learned
+        reverb cannot hide an under-trained oscillator behind a large IR.
+        ``reverb_ir`` is an IR for the legacy model or a compact control vector
+        for the v2 FDN path.
+        """
+        wet_loss = self.mssLoss(y_pred, y_true)
+        if dry_pred is None:
+            dry_pred = y_pred
+        dry_loss = self.mssLoss(dry_pred, y_true)
+
+        reverb_loss = y_pred.new_zeros(())
+        if reverb_ir is not None and self.reverb_mode == 'ir':
+            reverb_loss = self.reverb_l1_loss(reverb_ir)
+            peak_penalty = torch.relu(reverb_ir.abs().amax(dim=-1) - 0.1).mean()
+            tail_start = min(16_000, reverb_ir.shape[-1])
+            tail_penalty = reverb_ir[..., tail_start:].abs().mean()
+            reverb_loss = reverb_loss + self.peak_weight * peak_penalty
+            reverb_loss = reverb_loss + self.tail_weight * tail_penalty
+        elif reverb_ir is not None and self.reverb_mode == 'fdn':
+            reverb_loss = 1e-3 * reverb_ir.square().mean()
+
+        total = self.dry_weight * dry_loss + self.wet_weight * wet_loss + reverb_loss
+        if not self.phase:
+            l1_penalty = self.l1_weight_of_inharm * (
+                self.inharm.slopes_modifier.abs().sum()
+                + self.inharm.offsets_modifier.abs().sum()
+            )
+            total = total + l1_penalty
+        return total, wet_loss, reverb_loss, dry_loss
     
     def forward(self, y_pred, y_true, reverb_ir):
-        loss_mss = self.mssLoss(y_pred, y_true)
-        loss_reverb_l1 = self.reverb_l1_loss(reverb_ir)
-        if self.phase:
-            return loss_mss + loss_reverb_l1, loss_mss, loss_reverb_l1
-        else:
-            l1_penalty = self.l1_weight_of_inharm * sum([self.inharm.slopes_modifier.abs().sum()]) + self.l1_weight_of_inharm * sum([self.inharm.offsets_modifier.abs().sum()]) 
-            return loss_mss + loss_reverb_l1 + l1_penalty, loss_mss, loss_reverb_l1
+        total, wet_loss, reverb_loss, _ = self.components(y_pred, y_true, reverb_ir)
+        return total, wet_loss, reverb_loss
 
 
 ###### from ddsp-singing-vocoder
@@ -102,6 +148,8 @@ class ReverbRegularizer(nn.Module):
     """
     def __init__(self, weight=0.01, loss_type='L1'):
         super(ReverbRegularizer, self).__init__()
+        if loss_type not in {'L1', 'L2'}:
+            raise ValueError(f"loss_type must be 'L1' or 'L2', got {loss_type!r}")
         self.weight = weight
         self.loss_type = loss_type
     def forward(self, reverb_ir):

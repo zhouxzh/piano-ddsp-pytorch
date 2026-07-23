@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -71,6 +72,15 @@ class MaestroTrack:
     year: int
     piano_id: int
     split: str
+
+
+@dataclass(frozen=True)
+class MidiConditioning:
+    conditioning: np.ndarray
+    pedal: np.ndarray
+    duration_seconds: float
+    max_observed_polyphony: int
+    overflow_frames: int
 
 
 def _read_rows(maestro_root: Path) -> list[dict[str, str]]:
@@ -174,16 +184,17 @@ def _midi_roll(midi_path: Path, n_frames: int, frame_rate: int) -> tuple[np.ndar
 
     for frame in range(n_frames):
         for message in scheduled.get(frame, []):
-            if message.type == "control_change" and 64 <= message.control <= 67:
-                control_index = message.control - 64
-                previous_sustain = sustain_on
-                controls[control_index] = message.value / 127.0
-                if message.control == 64:
-                    sustain_on = message.value >= 64
-                    if previous_sustain and not sustain_on:
-                        for note in deferred_note_off:
-                            active.pop(note, None)
-                        deferred_note_off.clear()
+            if message.type == "control_change":
+                if 64 <= message.control <= 67:
+                    control_index = message.control - 64
+                    previous_sustain = sustain_on
+                    controls[control_index] = message.value / 127.0
+                    if message.control == 64:
+                        sustain_on = message.value >= 64
+                        if previous_sustain and not sustain_on:
+                            for note in deferred_note_off:
+                                active.pop(note, None)
+                            deferred_note_off.clear()
                 continue
 
             if not 21 <= message.note <= 108:
@@ -234,6 +245,35 @@ def _pack_polyphony(midi_roll: np.ndarray, max_polyphony: int) -> tuple[np.ndarr
                 conditioning[frame, slot, 1] = midi_roll[frame, midi_index, 1]
 
     return conditioning, polyphony
+
+
+def load_midi_conditioning(
+    midi_path: Path,
+    frame_rate: int,
+    max_polyphony: int,
+    tail_seconds: float = 0.0,
+) -> MidiConditioning:
+    """Build the fixed-rate, stable-slot conditioning used by training and ONNX tests."""
+    midi_path = Path(midi_path)
+    if not midi_path.is_file():
+        raise FileNotFoundError(f"MIDI file not found: {midi_path}")
+    if frame_rate <= 0 or max_polyphony <= 0:
+        raise ValueError("frame_rate and max_polyphony must be positive")
+    if tail_seconds < 0.0:
+        raise ValueError("tail_seconds must be non-negative")
+
+    duration_seconds = float(mido.MidiFile(str(midi_path)).length)
+    tail_frames = int(round(tail_seconds * frame_rate))
+    n_frames = max(1, int(np.ceil(duration_seconds * frame_rate)) + 1 + tail_frames)
+    midi_roll, pedal = _midi_roll(midi_path, n_frames, frame_rate)
+    conditioning, polyphony = _pack_polyphony(midi_roll, max_polyphony)
+    return MidiConditioning(
+        conditioning=conditioning,
+        pedal=pedal,
+        duration_seconds=duration_seconds,
+        max_observed_polyphony=int(polyphony.max(initial=0)),
+        overflow_frames=int(np.count_nonzero(polyphony > max_polyphony)),
+    )
 
 
 def build_track_cache(
@@ -302,17 +342,43 @@ def prepare_split(
     split: str,
     config: PreprocessConfig,
     limit: int | None = None,
+    workers: int = 1,
 ) -> dict[str, int]:
     tracks, years = load_tracks(maestro_root, split)
     if limit is not None:
         tracks = tracks[:limit]
-    created = 0
-    for track in tqdm(tracks, desc=f"Caching {split}"):
+    if workers <= 0:
+        raise ValueError("workers must be positive")
+
+    def cache_track(track: MaestroTrack) -> int:
         path = _cache_dir(cache_root, track, config)
         existed = _cache_complete(path, config)
         build_track_cache(maestro_root, cache_root, track, config)
-        created += int(not existed)
+        return int(not existed)
+
+    if workers == 1:
+        created = sum(cache_track(track) for track in tqdm(tracks, desc=f"Caching {split}"))
+    else:
+        jobs = [(maestro_root, cache_root, track, config) for track in tracks]
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            created = sum(
+                tqdm(
+                    executor.map(_cache_track_worker, jobs, chunksize=1),
+                    total=len(jobs),
+                    desc=f"Caching {split}",
+                )
+            )
     return {"tracks": len(tracks), "created": created, "piano_models": len(years)}
+
+
+def _cache_track_worker(
+    job: tuple[Path, Path, MaestroTrack, PreprocessConfig],
+) -> int:
+    maestro_root, cache_root, track, config = job
+    path = _cache_dir(cache_root, track, config)
+    existed = _cache_complete(path, config)
+    build_track_cache(maestro_root, cache_root, track, config)
+    return int(not existed)
 
 
 @lru_cache(maxsize=4)
@@ -351,7 +417,8 @@ class MaestroSegmentDataset(Dataset):
             if not _cache_complete(track_cache, config):
                 if require_cache:
                     raise FileNotFoundError(
-                        f"Missing cache for {track.audio_rel}. Run scripts/prepare_maestro.py first."
+                        f"Missing cache for {track.audio_rel}. "
+                        "Run train.py with --prepare or --prepare-only first."
                     )
                 build_track_cache(maestro_root, cache_root, track, config)
 

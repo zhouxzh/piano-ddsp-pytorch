@@ -4,7 +4,7 @@ from torch.nn.utils import weight_norm
 
 import numpy as np 
 
-from ddsp_piano.ddsp_pytorch.core import resample, midi_to_hz
+from ddsp_piano.ddsp_pytorch.core import midi_to_hz
 from ddsp_piano.modules.inharm_synth import MultiInharmonic
 from ddsp_piano.ddsp_pytorch.noise import Noise
 from ddsp_piano.ddsp_pytorch.reverb import Reverb
@@ -29,6 +29,15 @@ class ContextNetwork(nn.Module):
         new_shape = (shape[0], shape[1], shape[2] * shape[3])
         return torch.reshape(x, new_shape)
 
+    def forward_stateful(self, conditioning, pedal, z, hidden_state=None):
+        """Compute context and return the GRU state for streaming inference."""
+        x = torch.cat([self.collapse_last_axis(conditioning), pedal, z], dim=-1)
+        x = self.linear(x)
+        x = self.leaky_relu(x)
+        x, next_state = self.gru(x, hidden_state)
+        x = self.layer_norm(x)
+        return self.dense_out(x), next_state
+
     def forward(self, conditioning, pedal, z):
         """
         Args:
@@ -36,13 +45,8 @@ class ContextNetwork(nn.Module):
             - pedal (b, n_frames, 4)
             - z (b, n_frames, 16)
         """
-        x = torch.cat([self.collapse_last_axis(conditioning), pedal, z], dim=-1) # (b, 750, 52)
-        x = self.linear(x) 
-        x = self.leaky_relu(x) 
-        x, _ = self.gru(x) # h0 init 0 or not???????
-        x = self.layer_norm(x)
-        x = self.dense_out(x)
-        return x #x[:,:,:32] # in the original ddsp-piano, it splits 32 dimension to be the output 
+        context, _ = self.forward_stateful(conditioning, pedal, z)
+        return context
 
 # parallelize part: ok, unparallelize: not yet
 class Parallelizer(nn.Module):
@@ -241,7 +245,7 @@ class MonophonicNetwork(nn.Module):
         self.dense_out = nn.Linear(192, 161) # same number of parameters with original ddsp-piano
         self.midi_norm = 128.
 
-    def forward(self, conditioning, extended_pitch, context):
+    def forward_stateful(self, conditioning, extended_pitch, context, hidden_state=None):
         """Forward parallelized monophonic inputs through the model.
         Args:
             - conditioning (batch * n_synths, n_frames, 2): parallelized active
@@ -257,7 +261,7 @@ class MonophonicNetwork(nn.Module):
         
         x = self.linear_1(x)
         x = self.leaky_relu_1(x)
-        x, _ = self.gru(x)
+        x, next_state = self.gru(x, hidden_state)
         x = self.linear_2(x)
         x = self.leaky_relu_2(x)
         x = self.layer_norm(x)
@@ -271,7 +275,13 @@ class MonophonicNetwork(nn.Module):
         """
         
         amplitudes, harmonic_distribution, maginutes = torch.split(x, [1, 96, 64], dim=-1)
-        return amplitudes, harmonic_distribution, maginutes
+        return amplitudes, harmonic_distribution, maginutes, next_state
+
+    def forward(self, conditioning, extended_pitch, context):
+        amplitudes, harmonic_distribution, magnitudes, _ = self.forward_stateful(
+            conditioning, extended_pitch, context
+        )
+        return amplitudes, harmonic_distribution, magnitudes
 
 # currently ok
 class OneHotZEncoder(nn.Module):
@@ -333,10 +343,11 @@ class OneHotZEncoder(nn.Module):
             global_detuning = global_detuning.unsqueeze(1)
         
         if self.n_frames is not None:
-            # Expand time dim
-            z = resample(z, self.n_frames)
-            global_inharm = resample(global_inharm, self.n_frames)
-            global_detuning = resample(global_detuning, self.n_frames)
+            # The instrument identity is constant over a segment. Interpolation
+            # changes its value near the segment boundaries, so broadcast it.
+            z = z.expand(-1, self.n_frames, -1)
+            global_inharm = global_inharm.expand(-1, self.n_frames, -1)
+            global_detuning = global_detuning.expand(-1, self.n_frames, -1)
         
         """
             z:  (b, 750, 16)
@@ -380,7 +391,7 @@ class NoteRelease(nn.Module):
     Based on the custom RNN F0ProcessorCell"""
     def __init__(self, frame_rate=250):
         super(NoteRelease, self).__init__()
-        self.layer = F0ProcessorCell_RNN()
+        self.layer = F0ProcessorCell_RNN(frame_rate=frame_rate)
     
     def forward(self, conditioning):
         """
@@ -420,11 +431,12 @@ class MultiInstrumentReverb(nn.Module):
         - n_instruments (int): number of instrument reverbs to model.
         - reverb_length (int): number of samples for each impulse response.
     """
-    def __init__(self, n_instruments=10, reverb_length=24000, inference=False):
+    def __init__(self, n_instruments=10, reverb_length=24000, inference=False, apply_decay=True):
         super(MultiInstrumentReverb, self).__init__()
         self.reverb_length = reverb_length
         self.n_instruments = n_instruments
         self.inference = inference
+        self.apply_decay = apply_decay
 
         self.reverb_dict = nn.Embedding(self.n_instruments, self.reverb_length)
         self.reverb_dict.weight.data.normal_(mean=0.0, std=1e-6)
@@ -455,7 +467,7 @@ class MultiInstrumentReverb(nn.Module):
         if len(ir.shape) == 3:
             ir = ir[:, 0]
         # Apply decay mask
-        if self.inference:
+        if self.apply_decay:
             ir = self.exponential_decay_mask(ir)
         return ir
 

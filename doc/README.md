@@ -1,0 +1,11 @@
+# DDSP 钢琴工程审查文档
+
+本目录汇总当前模型结构、实时推理、上游参考实现和 Ascend 310B 部署相关的工程文档。
+
+## 文档索引
+
+- [当前网络结构与实时性审查](current-architecture-and-realtime-review.md)
+- [DDSP、DDSP-VST、MIDI-DDSP 与当前钢琴模型结构对比](ddsp-network-structure-comparison.md)
+- [`_upstream` 仓库审查与借鉴建议](upstream-reference-review.md)
+- [Ascend 310B 实时落地路线与验收标准](realtime-ascend-roadmap.md)
+- [MIDI 测试曲目与来源](midi-test-corpus.md)

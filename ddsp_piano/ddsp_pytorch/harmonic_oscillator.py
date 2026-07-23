@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
 
-from ddsp_piano.ddsp_pytorch.core import remove_above_nyquist, resample, upsample
+from ddsp_piano.ddsp_pytorch.core import remove_frequencies_above_nyquist
 
 
 class HarmonicOscillator(nn.Module):
@@ -59,7 +59,9 @@ class HarmonicOscillator(nn.Module):
         frequency_envelopes = frequency_envelope.to(torch.float32)
         amplitude_envelopes = amplitude_envelope.to(torch.float32)
 
-        amplitude_envelopes = remove_above_nyquist(amplitude_envelopes, frequency_envelopes, sample_rate)
+        amplitude_envelopes = remove_frequencies_above_nyquist(
+            amplitude_envelopes, frequency_envelopes, sample_rate
+        )
         
         omegas = frequency_envelopes * (2.0 * np.pi)
         omegas = omegas / float(sample_rate)
@@ -103,9 +105,14 @@ class HarmonicOscillator(nn.Module):
         else:
             harmonic_amplitudes = amplitudes
         
-        # Create sample-wise envelopes.
-        frequency_envelopes = upsample(harmonic_frequencies, 64)  # cycles/sec
-        amplitude_envelopes = upsample(harmonic_amplitudes, 64) # maybe window?
+        # Create sample-wise envelopes from the configured segment contract.
+        target_samples = self.n_samples if n_samples is None else int(n_samples)
+        frequency_envelopes = F.interpolate(
+            harmonic_frequencies.permute(0, 2, 1), size=target_samples
+        ).permute(0, 2, 1)
+        amplitude_envelopes = F.interpolate(
+            harmonic_amplitudes.permute(0, 2, 1), size=target_samples
+        ).permute(0, 2, 1)
 
         audio = self.oscillator_bank(frequency_envelopes, amplitude_envelopes, self.fs).squeeze(-1)
 

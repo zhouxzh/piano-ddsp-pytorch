@@ -1,6 +1,10 @@
 import torch 
 import torch.nn as nn
-from ddsp_piano.ddsp_pytorch.core import scale_function, remove_above_nyquist, frequency_filter
+from ddsp_piano.ddsp_pytorch.core import (
+    frequency_filter,
+    remove_frequencies_above_nyquist,
+    scale_function,
+)
 from ddsp_piano.ddsp_pytorch.harmonic_oscillator import HarmonicOscillator
 
 def get_inharmonic_freq(f0_hz, inharm_coef, n_harmonics):
@@ -96,7 +100,9 @@ class InHarmonic(nn.Module):
 
         # Bandlimit the harmonic distribution
         if self.normalize_below_nyquist:
-            harmonic_distribution = remove_above_nyquist(harmonic_distribution, inharmonic_freq, self.sample_rate)
+            harmonic_distribution = remove_frequencies_above_nyquist(
+                harmonic_distribution, inharmonic_freq, self.sample_rate
+            )
             # Set amplitude to zero if below hearable
             aa = (f0_hz > self.min_frequency).float() + 1e-4
             amplitudes = amplitudes * aa
@@ -106,7 +112,7 @@ class InHarmonic(nn.Module):
         if self.use_amplitude:
             harmonic_distribution = harmonic_distribution / torch.sum(harmonic_distribution, dim=-1, keepdim=True)
         else:
-            amplitudes = tf.ones_like(amplitudes)
+            amplitudes = torch.ones_like(amplitudes)
         
         return {'amplitudes': amplitudes,
                 'harmonic_distribution': harmonic_distribution,
@@ -163,7 +169,7 @@ class MultiInharmonic(nn.Module):
         # Put back multi-f0 signal
         controls["f0_hz"] = f0_hz
         # Divide global amplitude by the number of substrings
-        controls['amplitudes'] = controls['amplitudes'] / torch.tensor(f0_hz.shape[-1]).to(torch.float32)
+        controls['amplitudes'] = controls['amplitudes'] / f0_hz.new_tensor(f0_hz.shape[-1])
         return controls
     
     def forward(self,
