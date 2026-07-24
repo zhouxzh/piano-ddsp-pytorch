@@ -183,6 +183,32 @@ class DeploymentTest(unittest.TestCase):
         self.assertEqual(tuple(outputs[5].shape), (1, 9))
         self.assertTrue(torch.isfinite(outputs[5]).all())
 
+    def test_v2_ir_ablation_keeps_configured_control_dimensions(self) -> None:
+        model = get_v2_model(
+            n_synths=2,
+            n_piano_models=1,
+            duration=1 / 250,
+            frame_rate=250,
+            sample_rate=16_000,
+            n_harmonics=96,
+            n_noise_filter_banks=64,
+            reverb_type="ir",
+        ).eval()
+        wrapper = PianoRealtimeControlModel(model).eval()
+        inputs = (
+            torch.zeros(1, 1, 2, 2),
+            torch.zeros(1, 1, 4),
+            torch.zeros(1, dtype=torch.int32),
+            torch.zeros(1, 1, 2, 1),
+            torch.zeros(1, 1, 64),
+            torch.zeros(1, 2, 192),
+        )
+        with torch.inference_mode():
+            outputs = wrapper(*inputs)
+        self.assertEqual(tuple(outputs[1].shape), (1, 1, 2, 96))
+        self.assertEqual(tuple(outputs[4].shape), (1, 1, 2, 64))
+        self.assertEqual(tuple(outputs[5].shape), (1, 24_000))
+
     def test_fdn_controls_are_bounded_and_renderable(self) -> None:
         controls = torch.zeros(1, 9)
         impulse, wet_mix = fdn_impulse_response(controls, sample_rate=16_000, length=512)

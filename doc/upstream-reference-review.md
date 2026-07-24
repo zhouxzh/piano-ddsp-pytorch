@@ -1,4 +1,4 @@
-# `_upstream` 仓库审查与借鉴建议
+# `references` 参考仓库审查与借鉴建议
 
 审查日期：2026-07-21
 
@@ -19,7 +19,7 @@
 
 ## 1. 官方 `ddsp-piano`
 
-- 路径：`_upstream/ddsp-piano`
+- 路径：`references/ddsp-piano`
 - 仓库：`https://github.com/lrenault/ddsp-piano.git`
 - 修订：`e868b7ccd3fe31b39132048a72561d7fcf1b465f`
 
@@ -41,7 +41,7 @@ v2 的 FiLM、联合物理调律和 FDN 值得作为第二代模型实验，但�
 
 ## 2. `ddsp-vst`
 
-- 路径：`_upstream/ddsp-vst`
+- 路径：`references/ddsp-vst`
 - 仓库：`https://github.com/magenta/ddsp-vst.git`
 - 修订：`f2996e97f9469f3956a6b8e9d2d9b50b6555e1e9`
 
@@ -60,7 +60,7 @@ v2 的 FiLM、联合物理调律和 FDN 值得作为第二代模型实验，但�
 
 ## 3. ACIDS `ddsp_pytorch`
 
-- 路径：`_upstream/ddsp_pytorch`
+- 路径：`references/acids-ddsp_pytorch`
 - 仓库：`https://github.com/acids-ircam/ddsp_pytorch.git`
 - 修订：`9db246f48dba66e9b2133691d7abf4af6ede0279`
 
@@ -70,7 +70,7 @@ v2 的 FiLM、联合物理调律和 FDN 值得作为第二代模型实验，但�
 
 ## 4. `realtimeDDSP`
 
-- 路径：`_upstream/realtimeDDSP`
+- 路径：`references/realtime-ddsp`
 - 仓库：`https://github.com/hyakuchiki/realtimeDDSP.git`
 - 修订：`3f2f79039413fb01c1a00164b4429539c7db358e`
 
@@ -85,7 +85,7 @@ v2 的 FiLM、联合物理调律和 FDN 值得作为第二代模型实验，但�
 
 ## 5. `ddsp-realtime`
 
-- 路径：`_upstream/ddsp-realtime`
+- 路径：`references/ddsp-realtime`
 - 仓库：`https://github.com/woosukji/ddsp-realtime.git`
 - 修订：`6cdfb583e5e99acf02cd47dd0a327679d968242a`
 
@@ -95,7 +95,7 @@ README 中的 M1 性能数据和多声部声明不是本项目的证据。模型
 
 ## 6. `midi-ddsp`
 
-- 路径：`_upstream/midi-ddsp`
+- 路径：`references/midi-ddsp`
 - 仓库：`https://github.com/magenta/midi-ddsp.git`
 - 修订：`d7af42704a63b47267ae6a1bc0fee1ed7dc5c855`
 
@@ -124,13 +124,13 @@ volume, vol_fluc, vibrato, brightness, attack, vol_peak_pos
 
 ## 8. 两个旧 PyTorch 参考
 
-`_upstream/ddsp-piano-pytorch` 是当前代码的直接历史来源，修订为 `2c9e17aa0c179e2c5dd6e9bdf2d78ab7cb0b9ee5`。它适合核对旧 TensorFlow 模型的层尺寸，但原项目的数据、训练和推理路径不完整，也没有可靠的实时部署设计。
+`references/ddsp-piano-pytorch` 是当前代码的直接历史来源，修订为 `2c9e17aa0c179e2c5dd6e9bdf2d78ab7cb0b9ee5`。它适合核对旧 TensorFlow 模型的层尺寸，但原项目的数据、训练和推理路径不完整，也没有可靠的实时部署设计。
 
-`_upstream/ddsp-pytorch` 是 sweetcocoa 的早期通用 PyTorch DDSP，修订为 `ea5f25318dd4cd22c601dd405ebc2bac8e3f4cb6`。它适合阅读基础谐波加噪声实现，实时性和钢琴针对性均低于 ACIDS 与 `realtimeDDSP`。
+`references/sweetcocoa-ddsp-pytorch` 是 sweetcocoa 的早期通用 PyTorch DDSP，修订为 `ea5f25318dd4cd22c601dd405ebc2bac8e3f4cb6`。它适合阅读基础谐波加噪声实现，实时性和钢琴针对性均低于 ACIDS 与 `realtimeDDSP`。
 
 ## 9. Ascend CANN 样例
 
-`_upstream/ascend-cann-samples` 当前修订为 `6511a5f4a45a1f68bd5e617989e68560f2f35cd6`，但工作树使用 sparse checkout，只检出了 `cplusplus/level1_single_api/6_media/1_audio/audio_gitee`。该目录是媒体音频接口样例，不包含 ONNX 转 OM、`aclmdl` 加载执行、异步 stream、静态内存复用或性能测试范例。
+`references/ascend-cann-samples` 当前修订为 `6511a5f4a45a1f68bd5e617989e68560f2f35cd6`，但工作树使用 sparse checkout，只检出了 `cplusplus/level1_single_api/6_media/1_audio/audio_gitee`。该目录保留了本机 CANN 8.3 音频设备与帧长度兼容修改；它仍只是媒体音频接口样例，不包含 ONNX 转 OM、`aclmdl` 加载执行、异步 stream、静态内存复用或性能测试范例。
 
 因此当前内容不能支持“已参考 CANN 推理实现”的结论。后续应补齐与实际 CANN 版本匹配的模型推理、动态/静态 shape、异步执行和性能样例，再单独记录来源修订；不要用媒体音频样例代替模型部署验证。
 

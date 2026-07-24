@@ -16,6 +16,7 @@ import onnxruntime as ort
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from ddsp_piano.versioning import model_output_label
 from scripts.render_onnx import CONTROL_OUTPUT_NAMES, INPUT_NAMES, _validate_contract
 
 
@@ -144,16 +145,24 @@ def main() -> int:
         raise RuntimeError(f"No compatible stateful ONNX models found in: {model_dir}")
 
     failures = 0
+    used_output_labels: set[str] = set()
     renderer = ROOT / "scripts" / "render_onnx.py"
     for model_path, metadata in compatible:
         piano_models = metadata["piano_model_index_to_maestro_year"]
         piano_model = min(args.piano_model, len(piano_models) - 1)
-        output_dir = run_dir / model_path.stem
+        release_version = model_output_label(model_path, metadata)
+        output_label = release_version
+        if output_label in used_output_labels:
+            output_label = f"{release_version}-{model_path.stem}"
+        used_output_labels.add(output_label)
+        output_dir = run_dir / output_label
         entry: dict[str, object] = {
             "model": str(model_path),
             "model_sha256": _model_sha256(model_path),
             "metadata": str(model_path.with_suffix(".json")),
             "model_variant": metadata.get("model_variant"),
+            "release_version": release_version,
+            "output_label": output_label,
             "training_phase": metadata.get("training_phase"),
             "piano_model": piano_model,
             "maestro_year": piano_models[piano_model],

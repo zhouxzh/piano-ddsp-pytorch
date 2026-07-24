@@ -17,6 +17,9 @@ class HybridLoss(nn.Module):
         peak_weight=0.01,
         tail_weight=0.02,
         reverb_mode='ir',
+        energy_weight=0.0,
+        onset_weight=0.0,
+        sample_rate=16_000,
     ):
         super().__init__()
         self.inharm = inharm
@@ -30,9 +33,35 @@ class HybridLoss(nn.Module):
         self.peak_weight = float(peak_weight)
         self.tail_weight = float(tail_weight)
         self.reverb_mode = reverb_mode
+        self.energy_weight = float(energy_weight)
+        self.onset_weight = float(onset_weight)
+        self.energy_window = max(1, int(round(sample_rate * 0.064)))
+        self.onset_window = max(1, int(round(sample_rate * 0.016)))
+        self.envelope_hop = max(1, int(round(sample_rate * 0.004)))
+
+    @staticmethod
+    def _frame_rms(value, window, hop):
+        value = value.unsqueeze(1) if value.ndim == 2 else value
+        power = F.avg_pool1d(value.square(), window, stride=hop, ceil_mode=True)
+        return torch.sqrt(power.clamp_min(1e-8)).squeeze(1)
+
+    def _energy_loss(self, prediction, target):
+        pred_rms = self._frame_rms(prediction, self.energy_window, self.energy_window)
+        target_rms = self._frame_rms(target, self.energy_window, self.energy_window)
+        return F.l1_loss(
+            torch.log1p(100.0 * pred_rms),
+            torch.log1p(100.0 * target_rms),
+        )
+
+    def _onset_loss(self, prediction, target):
+        pred = self._frame_rms(prediction, self.onset_window, self.envelope_hop)
+        truth = self._frame_rms(target, self.onset_window, self.envelope_hop)
+        pred = pred / pred.mean(dim=-1, keepdim=True).clamp_min(1e-5)
+        truth = truth / truth.mean(dim=-1, keepdim=True).clamp_min(1e-5)
+        return F.l1_loss(torch.diff(pred, dim=-1), torch.diff(truth, dim=-1))
 
     def components(self, y_pred, y_true, reverb_ir=None, dry_pred=None):
-        """Return total, wet spectral, reverb, and dry spectral losses.
+        """Return total, wet, reverb, dry, energy, and onset losses.
 
         The dry branch is deliberately part of the objective so the learned
         reverb cannot hide an under-trained oscillator behind a large IR.
@@ -55,17 +84,24 @@ class HybridLoss(nn.Module):
         elif reverb_ir is not None and self.reverb_mode == 'fdn':
             reverb_loss = 1e-3 * reverb_ir.square().mean()
 
+        energy_loss = y_pred.new_zeros(())
+        onset_loss = y_pred.new_zeros(())
+        if self.energy_weight:
+            energy_loss = self._energy_loss(dry_pred, y_true)
+        if self.onset_weight:
+            onset_loss = self._onset_loss(dry_pred, y_true)
         total = self.dry_weight * dry_loss + self.wet_weight * wet_loss + reverb_loss
+        total = total + self.energy_weight * energy_loss + self.onset_weight * onset_loss
         if not self.phase:
             l1_penalty = self.l1_weight_of_inharm * (
                 self.inharm.slopes_modifier.abs().sum()
                 + self.inharm.offsets_modifier.abs().sum()
             )
             total = total + l1_penalty
-        return total, wet_loss, reverb_loss, dry_loss
+        return total, wet_loss, reverb_loss, dry_loss, energy_loss, onset_loss
     
     def forward(self, y_pred, y_true, reverb_ir):
-        total, wet_loss, reverb_loss, _ = self.components(y_pred, y_true, reverb_ir)
+        total, wet_loss, reverb_loss, _, _, _ = self.components(y_pred, y_true, reverb_ir)
         return total, wet_loss, reverb_loss
 
 

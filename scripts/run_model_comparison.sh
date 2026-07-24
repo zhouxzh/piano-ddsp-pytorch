@@ -6,8 +6,8 @@ readonly PYTHON_BIN="${PYTHON_BIN:-/home/zhong/anaconda3/envs/torch/bin/python}"
 readonly MAESTRO_ROOT="${MAESTRO_ROOT:-${PROJECT_DIR}/data/maestro-v3.0.0}"
 readonly CACHE_DIR="${CACHE_DIR:-${PROJECT_DIR}/cache/maestro-v3.0.0}"
 readonly RUN_ROOT="${RUN_ROOT:-${PROJECT_DIR}/runs/model_comparison}"
-readonly CURRENT_DIR="${RUN_ROOT}/current_fixed"
-readonly V2_DIR="${RUN_ROOT}/ddsp_v2"
+readonly V1_DIR="${RUN_ROOT}/v1"
+readonly V2_DIR="${RUN_ROOT}/v2"
 readonly EXPORT_DIR="${PROJECT_DIR}/exports"
 readonly MIDI_DIR="${PROJECT_DIR}/midi"
 readonly MIDI_TEST_DIR="${EXPORT_DIR}/midi_tests"
@@ -23,14 +23,14 @@ mkdir -p "${RUN_ROOT}" "${EXPORT_DIR}"
   --cache-dir "${CACHE_DIR}" \
   --prepare-only
 
-current_start=()
-if [[ -f "${CURRENT_DIR}/checkpoints/last.pt" ]]; then
-  current_start=(--resume "${CURRENT_DIR}/checkpoints/last.pt")
+v1_start=()
+if [[ -f "${V1_DIR}/checkpoints/last.pt" ]]; then
+  v1_start=(--resume "${V1_DIR}/checkpoints/last.pt")
 fi
 "${PYTHON_BIN}" train.py \
   --maestro-root "${MAESTRO_ROOT}" \
   --cache-dir "${CACHE_DIR}" \
-  --experiment-dir "${CURRENT_DIR}" \
+  --experiment-dir "${V1_DIR}" \
   --model-variant current \
   --phase 1 \
   --epochs "${EPOCHS}" \
@@ -38,7 +38,7 @@ fi
   --validation-batches "${VALIDATION_BATCHES}" \
   --device "${DEVICE:-cuda}" \
   --amp \
-  "${current_start[@]}"
+  "${v1_start[@]}"
 
 v2_start=()
 if [[ -f "${V2_DIR}/checkpoints/last.pt" ]]; then
@@ -58,7 +58,7 @@ fi
   "${v2_start[@]}"
 
 "${PYTHON_BIN}" scripts/export_onnx.py \
-  --checkpoint "${CURRENT_DIR}/checkpoints/best.pt" \
+  --checkpoint "${V1_DIR}/checkpoints/best.pt" \
   --output "${EXPORT_DIR}/piano_current_fixed.onnx"
 
 "${PYTHON_BIN}" scripts/export_onnx.py \
@@ -69,7 +69,7 @@ fi
 "${PYTHON_BIN}" scripts/render_onnx.py \
   --model "${EXPORT_DIR}/piano_current_fixed.onnx" \
   --midi-dir "${MIDI_DIR}" \
-  --output-dir "${MIDI_TEST_DIR}/current_fixed"
+  --output-dir "${MIDI_TEST_DIR}/v1"
 
 "${PYTHON_BIN}" scripts/render_onnx.py \
   --model "${EXPORT_DIR}/piano_ddsp_v2.onnx" \

@@ -1,0 +1,66 @@
+{
+  "schema": "ddsp-piano-quality-cycle/v1",
+  "cycle_id": "v2-quality-20260723",
+  "evaluation_config": "configs/evaluation_v1.json",
+  "baseline_onnx": "exports/piano_current_fixed.onnx",
+  "maestro_root": "data/maestro-v3.0.0",
+  "cache_dir": "cache/maestro-v3.0.0",
+  "midi_dir": "midi",
+  "run_root": "runs/quality_cycle",
+  "export_root": "exports/candidates",
+  "evaluation_root": "evaluations/quality_cycles",
+  "training": {
+    "batch_size": 1,
+    "steps_per_epoch": 2000,
+    "validation_batches": 32,
+    "num_workers": 4,
+    "prepare_workers": 4,
+    "learning_rate": 0.001,
+    "phase": 1,
+    "dry_loss_weight": 0.7,
+    "wet_loss_weight": 0.3,
+    "reverb_regularizer_weight": 0.05,
+    "grad_clip": 1.0,
+    "seed": 20260723,
+    "amp": true
+  },
+  "stages": [
+    {"name": "screen", "target_steps": 8000, "keep": 2, "profile": "dev"},
+    {"name": "semifinal", "target_steps": 20000, "keep": 2, "profile": "dev"},
+    {"name": "final", "target_steps": 40000, "keep": 1, "profile": "release"}
+  ],
+  "candidates": [
+    {
+      "id": "v2_fdn_128_96_energy_onset",
+      "n_harmonics": 128,
+      "n_noise_bands": 96,
+      "reverb_type": "fdn",
+      "energy_loss_weight": 0.1,
+      "onset_loss_weight": 0.05
+    },
+    {
+      "id": "v2_ir_128_96_energy_onset",
+      "n_harmonics": 128,
+      "n_noise_bands": 96,
+      "reverb_type": "ir",
+      "energy_loss_weight": 0.1,
+      "onset_loss_weight": 0.05
+    },
+    {
+      "id": "v2_ir_96_64_energy_onset",
+      "n_harmonics": 96,
+      "n_noise_bands": 64,
+      "reverb_type": "ir",
+      "energy_loss_weight": 0.1,
+      "onset_loss_weight": 0.05
+    },
+    {
+      "id": "v2_fdn_96_64_energy_onset",
+      "n_harmonics": 96,
+      "n_noise_bands": 64,
+      "reverb_type": "fdn",
+      "energy_loss_weight": 0.1,
+      "onset_loss_weight": 0.05
+    }
+  ]
+}

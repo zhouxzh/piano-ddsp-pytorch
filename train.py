@@ -47,6 +47,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-loss-weight", type=float, default=0.7)
     parser.add_argument("--wet-loss-weight", type=float, default=0.3)
     parser.add_argument("--reverb-regularizer-weight", type=float, default=0.05)
+    parser.add_argument("--n-harmonics", type=int)
+    parser.add_argument("--n-noise-bands", type=int)
+    parser.add_argument("--reverb-type", choices=("auto", "ir", "fdn"), default="auto")
+    parser.add_argument("--energy-loss-weight", type=float, default=0.0)
+    parser.add_argument("--onset-loss-weight", type=float, default=0.0)
     parser.add_argument("--save-every", type=int, default=1)
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--weights", type=Path, help="Load model weights only, for phase changes")
@@ -111,7 +116,7 @@ def run_validation(
                 signal, reverb_ir, dry_signal = model(conditioning, pedal, piano_model)
                 signal = signal[..., : audio.shape[-1]]
                 dry_signal = dry_signal[..., : audio.shape[-1]]
-                loss, _, _, _ = loss_fn.components(
+                loss, _, _, _, _, _ = loss_fn.components(
                     signal, audio, reverb_ir, dry_pred=dry_signal
                 )
             losses.append(float(loss.detach().cpu()))
@@ -158,6 +163,24 @@ def main() -> int:
     args = parse_args()
     if args.resume is not None and args.weights is not None:
         raise ValueError("--resume and --weights are mutually exclusive")
+    if args.n_harmonics is None:
+        args.n_harmonics = 128 if args.model_variant == "v2" else 96
+    if args.n_noise_bands is None:
+        args.n_noise_bands = 96 if args.model_variant == "v2" else 64
+    if args.reverb_type == "auto":
+        args.reverb_type = "fdn" if args.model_variant == "v2" else "ir"
+    if args.n_harmonics <= 0 or args.n_noise_bands <= 0:
+        raise ValueError("--n-harmonics and --n-noise-bands must be positive")
+    if args.energy_loss_weight < 0 or args.onset_loss_weight < 0:
+        raise ValueError("quality loss weights must be non-negative")
+    if args.model_variant == "current" and (
+        args.n_harmonics != 96
+        or args.n_noise_bands != 64
+        or args.reverb_type != "ir"
+    ):
+        raise ValueError(
+            "The v1/current architecture requires 96 harmonics, 64 noise bands, and IR reverb"
+        )
     config = config_from_args(args)
     device = select_device(args.device)
     torch.manual_seed(args.seed)
@@ -203,13 +226,20 @@ def main() -> int:
     train_loader = make_loader(train_dataset, args, shuffle=True)
     validation_loader = make_loader(validation_dataset, args, shuffle=False)
     model_builder = get_v2_model if args.model_variant == "v2" else get_model
-    model = model_builder(
+    model_kwargs = dict(
         n_synths=config.max_polyphony,
         n_piano_models=len(train_dataset.piano_models),
         sample_rate=config.sample_rate,
         duration=config.segment_seconds,
         frame_rate=config.frame_rate,
-    ).to(device)
+    )
+    if args.model_variant == "v2":
+        model_kwargs.update(
+            n_harmonics=args.n_harmonics,
+            n_noise_filter_banks=args.n_noise_bands,
+            reverb_type=args.reverb_type,
+        )
+    model = model_builder(**model_kwargs).to(device)
     model.alternate_training(first_phase=args.phase == 1)
     loss_fn = HybridLoss(
         [2048, 1024, 512, 256, 128, 64],
@@ -218,7 +248,10 @@ def main() -> int:
         weight=args.reverb_regularizer_weight,
         dry_weight=args.dry_loss_weight,
         wet_weight=args.wet_loss_weight,
-        reverb_mode="fdn" if args.model_variant == "v2" else "ir",
+        reverb_mode=args.reverb_type,
+        energy_weight=args.energy_loss_weight,
+        onset_weight=args.onset_loss_weight,
+        sample_rate=config.sample_rate,
     ).to(device)
     optimizer = torch.optim.Adam(
         (parameter for parameter in model.parameters() if parameter.requires_grad),
@@ -270,7 +303,14 @@ def main() -> int:
                 signal, reverb_ir, dry_signal = model(conditioning, pedal, piano_model)
                 signal = signal[..., : audio.shape[-1]]
                 dry_signal = dry_signal[..., : audio.shape[-1]]
-                loss, spectral_loss, reverb_loss, dry_loss = loss_fn.components(
+                (
+                    loss,
+                    spectral_loss,
+                    reverb_loss,
+                    dry_loss,
+                    energy_loss,
+                    onset_loss,
+                ) = loss_fn.components(
                     signal, audio, reverb_ir, dry_pred=dry_signal
                 )
             scaler.scale(loss).backward()
@@ -285,7 +325,8 @@ def main() -> int:
                 print(
                     f"epoch={epoch + 1}/{args.epochs} step={global_step} "
                     f"loss={loss.item():.5f} wet={spectral_loss.item():.5f} "
-                    f"dry={dry_loss.item():.5f} reverb={reverb_loss.item():.5f}",
+                    f"dry={dry_loss.item():.5f} reverb={reverb_loss.item():.5f} "
+                    f"energy={energy_loss.item():.5f} onset={onset_loss.item():.5f}",
                     flush=True,
                 )
 

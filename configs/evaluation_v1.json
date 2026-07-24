@@ -1,0 +1,63 @@
+{
+  "schema": "ddsp-piano-eval-config/v1",
+  "suite_id": "quality-v1",
+  "preprocess": {
+    "sample_rate": 16000,
+    "frame_rate": 250,
+    "segment_seconds": 3.0,
+    "overlap": 0.5,
+    "max_polyphony": 16
+  },
+  "render": {
+    "warm_up_seconds": 0.5,
+    "tail_seconds": 2.5,
+    "chunk_seconds": 4.0,
+    "noise_seed": 20260722
+  },
+  "metrics": {
+    "fft_sizes": [2048, 1024, 512, 256, 128, 64],
+    "weights": {
+      "mrstft": 0.5,
+      "loudness_error_lu": 0.2,
+      "onset_envelope_l1": 0.15,
+      "spectral_centroid_error": 0.1,
+      "tail_decay_error_db_per_second": 0.05
+    }
+  },
+  "profiles": {
+    "quick": {"latency_iterations": 100},
+    "dev": {"latency_iterations": 1000},
+    "release": {"latency_iterations": 5000}
+  },
+  "gates": {
+    "minimum_stateful_steps": 100,
+    "maximum_onnx_bytes": 16777216,
+    "chunk_max_abs": 0.0001,
+    "composite_median": 0.98,
+    "group_median": 1.05,
+    "loudness_p95_regression_lu": 1.0,
+    "latency_p95_ratio": 1.25,
+    "human_preference_rate": 0.6,
+    "human_dimension_regression": 0.25,
+    "human_repeated_artifacts": 2
+  },
+  "listening": {
+    "enabled_profiles": ["dev", "release"],
+    "excerpt_seconds": 30.0,
+    "target_lufs": -23.0,
+    "fixed_target_peak_dbfs": -3.0,
+    "human_review_timeout_minutes": 30,
+    "poll_seconds": 30
+  },
+  "release_cache": {
+    "minimum_free_gb": 20,
+    "prepare_workers": 4
+  },
+  "allowed_operators": [
+    "Add", "Cast", "Clip", "Concat", "Constant", "ConstantOfShape",
+    "Div", "Equal", "Exp", "Expand", "GRU", "Gather", "LeakyRelu",
+    "MatMul", "Mul", "Pow", "ReduceMean", "ReduceSum", "Reshape",
+    "Shape", "Slice", "Split", "Sqrt", "Squeeze", "Sub", "Tile",
+    "Transpose", "Unsqueeze", "Where"
+  ]
+}

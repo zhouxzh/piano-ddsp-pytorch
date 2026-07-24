@@ -70,7 +70,14 @@ def _render_segment(model_path: Path, metadata: dict, segment, warm_up_seconds: 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--current", type=Path, required=True)
+    parser.add_argument(
+        "--v1",
+        "--current",
+        dest="v1",
+        type=Path,
+        required=True,
+        help="v1 ONNX export (--current remains a compatibility alias)",
+    )
     parser.add_argument("--v2", type=Path, required=True)
     parser.add_argument("--maestro-root", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path, required=True)
@@ -80,13 +87,13 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260722)
     args = parser.parse_args()
 
-    current_metadata = json.loads(args.current.with_suffix(".json").read_text(encoding="utf-8"))
+    v1_metadata = json.loads(args.v1.with_suffix(".json").read_text(encoding="utf-8"))
     v2_metadata = json.loads(args.v2.with_suffix(".json").read_text(encoding="utf-8"))
     config = PreprocessConfig(
-        sample_rate=int(current_metadata["sample_rate"]),
-        frame_rate=int(current_metadata["frame_rate"]),
+        sample_rate=int(v1_metadata["sample_rate"]),
+        frame_rate=int(v1_metadata["frame_rate"]),
         segment_seconds=3.0,
-        max_polyphony=int(_shape(current_metadata, "inputs", "conditioning")[2]),
+        max_polyphony=int(_shape(v1_metadata, "inputs", "conditioning")[2]),
     )
     dataset = MaestroSegmentDataset(
         args.maestro_root,
@@ -105,12 +112,12 @@ def main() -> int:
             indices.append(index)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    report = {"segments": [], "models": {"current": str(args.current), "v2": str(args.v2)}}
+    report = {"segments": [], "models": {"v1": str(args.v1), "v2": str(args.v2)}}
     for segment_index in indices:
         segment = dataset[segment_index]
         entry = {"index": segment_index}
         for label, model_path, metadata in (
-            ("current", args.current, current_metadata),
+            ("v1", args.v1, v1_metadata),
             ("v2", args.v2, v2_metadata),
         ):
             signals, target, piano_id = _render_segment(

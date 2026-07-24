@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections import Counter
@@ -19,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from ddsp_piano.default_model import get_model, get_v2_model
 from ddsp_piano.deployment import PianoRealtimeControlModel
+from ddsp_piano.versioning import release_version_for_variant
 
 
 INPUT_NAMES = [
@@ -54,6 +56,14 @@ V2_OUTPUT_NAMES = [
 def _checkpoint_value(checkpoint: dict, name: str, fallback: int) -> int:
     value = checkpoint.get("args", {}).get(name, fallback)
     return int(value)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _shape(value: torch.Tensor | np.ndarray) -> list[int]:
@@ -126,9 +136,19 @@ def main() -> int:
 
     checkpoint_variant = checkpoint.get("args", {}).get("model_variant", "current")
     model_variant = checkpoint_variant if args.model_variant == "auto" else args.model_variant
+    checkpoint_args = checkpoint.get("args", {})
+    n_harmonics = int(
+        checkpoint_args.get("n_harmonics", 128 if model_variant == "v2" else 96)
+    )
+    n_noise_bands = int(
+        checkpoint_args.get("n_noise_bands", 96 if model_variant == "v2" else 64)
+    )
+    reverb_type = str(
+        checkpoint_args.get("reverb_type", "fdn" if model_variant == "v2" else "ir")
+    )
     model_builder = get_v2_model if model_variant == "v2" else get_model
-    output_names = V2_OUTPUT_NAMES if model_variant == "v2" else CURRENT_OUTPUT_NAMES
-    model = model_builder(
+    output_names = V2_OUTPUT_NAMES if reverb_type == "fdn" else CURRENT_OUTPUT_NAMES
+    model_kwargs = dict(
         inference=True,
         n_synths=max_polyphony,
         n_piano_models=len(piano_models),
@@ -136,6 +156,13 @@ def main() -> int:
         duration=args.frames / frame_rate,
         frame_rate=frame_rate,
     )
+    if model_variant == "v2":
+        model_kwargs.update(
+            n_harmonics=n_harmonics,
+            n_noise_filter_banks=n_noise_bands,
+            reverb_type=reverb_type,
+        )
+    model = model_builder(**model_kwargs)
     model.load_state_dict(checkpoint["model"])
     phase = int(checkpoint.get("args", {}).get("phase", 1))
     model.alternate_training(first_phase=phase == 1)
@@ -203,6 +230,7 @@ def main() -> int:
     parameter_bytes = sum(parameter.numel() * parameter.element_size() for parameter in model.parameters())
     metadata = {
         "checkpoint": str(args.checkpoint),
+        "checkpoint_sha256": _sha256_file(args.checkpoint),
         "onnx": str(args.output),
         "opset": args.opset,
         "dtype": "FP32",
@@ -213,6 +241,14 @@ def main() -> int:
         "release_frames": frame_rate,
         "training_phase": phase,
         "model_variant": model_variant,
+        "release_version": release_version_for_variant(model_variant),
+        "model_config": {
+            "n_harmonics": n_harmonics,
+            "n_noise_bands": n_noise_bands,
+            "reverb_type": reverb_type,
+            "energy_loss_weight": float(checkpoint_args.get("energy_loss_weight", 0.0)),
+            "onset_loss_weight": float(checkpoint_args.get("onset_loss_weight", 0.0)),
+        },
         "n_harmonics": output_contract["harmonic_distribution"][-1],
         "n_noise_bands": output_contract["noise_magnitudes"][-1],
         "n_substrings": output_contract["f0_hz"][-1],
@@ -231,7 +267,7 @@ def main() -> int:
                 "decay_exponent": 4.0,
                 "reference": "ddsp_piano.modules.sub_modules.MultiInstrumentReverb",
             }
-            if model_variant != "v2"
+            if reverb_type == "ir"
             else {
                 "embedded_in_onnx": False,
                 "type": "fdn",

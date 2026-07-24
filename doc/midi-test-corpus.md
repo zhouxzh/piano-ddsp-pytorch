@@ -31,9 +31,13 @@
 
 - 测试集：`midi-1f2337644fb7`
 - 总索引：`exports/midi_tests/all_models/midi-1f2337644fb7/index.json`
-- current-fixed：`exports/midi_tests/all_models/midi-1f2337644fb7/piano_current_fixed/`
-- v2：`exports/midi_tests/all_models/midi-1f2337644fb7/piano_ddsp_v2/`
+- v1：`exports/midi_tests/all_models/midi-1f2337644fb7/v1/`
+- v2：`exports/midi_tests/all_models/midi-1f2337644fb7/v2/`
 
 9 个兼容模型目录中的同名 WAV 使用相同的 MIDI conditioning、warm-up、释放尾音和噪声种子，可直接进行人工 A/B 试听。正式模型使用钢琴音色索引 9；只有单音色 embedding 的 smoke 基线使用索引 0。每个目录的 `manifest.json` 记录模型路径、输出时长、峰值、RMS 和复音溢出帧数。
 
 `smoke_piano_controls.onnx` 没有固定单帧输入、显式循环状态和完整部署 JSON，不满足当前实时 ONNX 合同，因此不生成 WAV。总索引会记录该排除原因。
+
+`current-fixed` 从 2026-07-23 起正式命名为 **v1**。为兼容既有导出和部署脚本，模型文件仍为
+`exports/piano_current_fixed.onnx`，但文档、试听目录和比较报告统一使用 `v1`。版本定义和 v2
+当前音质问题见[模型版本命名与 v2 音质分析](model-versions.md)。

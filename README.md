@@ -122,18 +122,37 @@ status every 10 minutes. Current-model training uses a 0.7 dry / 0.3 wet
 spectral objective, a fixed 0.25 wet gain, and an IR-tail constraint; phase 2
 remains an A/B experiment.
 
-To train the repaired current model and the independent DDSP-Piano v2-style
+To train the repaired v1 model and the independent DDSP-Piano v2-style
 model with identical data settings, use:
 
 ```bash
 scripts/run_model_comparison.sh
 ```
 
-The script writes `piano_current_fixed.onnx` and `piano_ddsp_v2.onnx` after
-running CPU ONNX checks. It then renders every `.mid`/`.midi` file in `midi/`
-to `exports/midi_tests/current_fixed/` and `exports/midi_tests/v2/` for a
-same-score listening comparison. Override `EPOCHS`, `STEPS_PER_EPOCH`,
+The script writes `piano_current_fixed.onnx` (v1 compatibility filename) and
+`piano_ddsp_v2.onnx` after running CPU ONNX checks. It then renders every
+`.mid`/`.midi` file in `midi/` to `exports/midi_tests/v1/` and
+`exports/midi_tests/v2/` for a same-score listening comparison. Override
+`EPOCHS`, `STEPS_PER_EPOCH`,
 `DEVICE`, `MAESTRO_ROOT`, and `RUN_ROOT` for a smoke run or a full experiment.
+
+## Standardized Quality Cycle
+
+The repository now includes a deterministic MAESTRO evaluation suite, objective
+quality gates, a local 30-second blind-listening page, and a resumable four-candidate
+v2 training cycle. Start the complete cycle with:
+
+```bash
+conda run -n torch python scripts/run_quality_cycle.py --device cuda
+```
+
+The default human-review window is 30 minutes. An unanswered review becomes
+`deferred`; all listening files remain available and automated training proceeds
+to the next candidate. Late scores can still be imported. A candidate is only
+marked `promotion_ready` after both release objective gates and human gates pass,
+and the process never overwrites the official v1 files. Commands, metrics,
+thresholds, report paths, and recovery behavior are documented in
+[`doc/standardized-evaluation.md`](doc/standardized-evaluation.md).
 
 ## Pipeline Smoke Test
 
@@ -218,7 +237,7 @@ training-matched CPU DDSP synthesis boundary:
 conda run -n torch python scripts/render_onnx.py \
   --model exports/piano_current_fixed.onnx \
   --midi-dir midi \
-  --output-dir exports/midi_tests/current_fixed
+  --output-dir exports/midi_tests/v1
 ```
 
 The command loads the ONNX model and its adjacent deployment JSON, but no
@@ -250,9 +269,11 @@ python scripts/render_all_onnx_models.py \
 
 The command validates every ONNX graph and fixed deployment contract first.
 It writes a content-addressed test-set directory, one subdirectory per model,
-and an `index.json` containing model hashes, exclusions, piano embedding IDs,
-and completion status. Non-stateful or incomplete smoke graphs are listed as
-excluded instead of being treated as comparable model versions.
+and an `index.json` containing model hashes, release versions, exclusions,
+piano embedding IDs, and completion status. The two release directories are
+named `v1/` and `v2/`; diagnostic models retain their model stem. Non-stateful
+or incomplete smoke graphs are listed as excluded instead of being treated as
+comparable model versions.
 
 Add `--decompose` to also write separately normalized harmonic, filtered-noise,
 and unreverberated stems next to the main WAV. These stems are intended for
@@ -264,23 +285,29 @@ through both exports:
 
 ```bash
 python scripts/render_onnx.py --model exports/piano_current_fixed.onnx \
-  --midi-dir midi --output-dir exports/midi_tests/current_fixed
+  --midi-dir midi --output-dir exports/midi_tests/v1
 python scripts/render_onnx.py --model exports/piano_ddsp_v2.onnx \
   --midi-dir midi --output-dir exports/midi_tests/v2
 ```
 
 The two directories use identical WAV basenames, MIDI conditioning, piano
-embedding, warm-up, release tail, and noise seed.
+embedding, warm-up, release tail, and noise seed. The public version names and
+the current v2 quality diagnosis are documented in
+[`doc/model-versions.md`](doc/model-versions.md).
 
 ## Local References
 
-The requested references are downloaded under the ignored `references/`
-directory: ACIDS IRCAM's PyTorch DDSP implementation, Google's DDSP repository,
-and the DDSP paper PDF (`arXiv:2001.04643`). See `UPSTREAM.md` for revisions.
+All third-party repositories, papers, and reference models live under the
+ignored `references/` directory. Its committed
+[`references/README.md`](references/README.md) records the directory layout,
+source revisions, checksums, and intended use. Magenta papers, dataset choices,
+and the HF Mirror-only download procedure are documented in
+[`doc/magenta-reference-materials.md`](doc/magenta-reference-materials.md).
+See `UPSTREAM.md` for provenance.
 
 ## Engineering Review
 
-The current architecture, realtime readiness, `_upstream/` comparison, and
+The current architecture, realtime readiness, upstream-reference comparison, and
 Ascend 310B implementation gates are documented in [`doc/README.md`](doc/README.md).
 
 ## Provenance

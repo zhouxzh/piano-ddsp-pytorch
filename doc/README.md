@@ -6,6 +6,10 @@
 
 - [当前网络结构与实时性审查](current-architecture-and-realtime-review.md)
 - [DDSP、DDSP-VST、MIDI-DDSP 与当前钢琴模型结构对比](ddsp-network-structure-comparison.md)
-- [`_upstream` 仓库审查与借鉴建议](upstream-reference-review.md)
+- [`references` 参考仓库审查与借鉴建议](upstream-reference-review.md)
 - [Ascend 310B 实时落地路线与验收标准](realtime-ascend-roadmap.md)
 - [MIDI 测试曲目与来源](midi-test-corpus.md)
+- [模型版本命名与 v2 音质分析](model-versions.md)
+- [标准化测试、盲听超时与自动优化流程](standardized-evaluation.md)
+- [Magenta 参考代码、论文与数据集](magenta-reference-materials.md)
+- [Magenta RealTime 2 技术参考](magenta-realtime-2.md)

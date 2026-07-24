@@ -55,7 +55,7 @@ concat [f0 features, power features, GRU output]
   -> amplitude(1) + harmonic_distribution(60) + noise_magnitudes(65)
 ```
 
-流式推理通过 [`VSTStatelessPredictControls`](../references/google-ddsp/ddsp/training/inference.py#L301) 显式输入、输出一个 512 维 GRU 状态。宿主常量见 [`Constants.h`](../_upstream/ddsp-vst/src/util/Constants.h)：
+流式推理通过 [`VSTStatelessPredictControls`](../references/google-ddsp/ddsp/training/inference.py#L301) 显式输入、输出一个 512 维 GRU 状态。宿主常量见 [`Constants.h`](../references/ddsp-vst/src/util/Constants.h)：
 
 - 16 kHz 模型采样率。
 - 50 Hz 控制帧率。
@@ -70,11 +70,11 @@ DDSP-VST 的 MIDI synth 路径只维护一个当前音符和一套 ADSR，本质
 
 ## MIDI-DDSP 的默认网络
 
-MIDI-DDSP 不是在 DDSP-VST 前面简单增加一个 MIDI 输入。默认配置由 [`hparams_synthesis_generator.py`](../_upstream/midi-ddsp/midi_ddsp/hparams_synthesis_generator.py#L35) 定义，采用 `interpretable_conditioning + rnn_synth_params`，包含“音符级表情生成”和“逐帧合成参数生成”两层模型。
+MIDI-DDSP 不是在 DDSP-VST 前面简单增加一个 MIDI 输入。默认配置由 [`hparams_synthesis_generator.py`](../references/midi-ddsp/midi_ddsp/hparams_synthesis_generator.py#L35) 定义，采用 `interpretable_conditioning + rnn_synth_params`，包含“音符级表情生成”和“逐帧合成参数生成”两层模型。
 
 ### 音符级表情生成器
 
-[`ExpressionGenerator`](../_upstream/midi-ddsp/midi_ddsp/modules/expression_generator.py#L39) 的输入是完整音符序列：
+[`ExpressionGenerator`](../references/midi-ddsp/midi_ddsp/modules/expression_generator.py#L39) 的输入是完整音符序列：
 
 ```text
 MIDI pitch -> Embedding(128, 64)
@@ -97,9 +97,9 @@ volume, vol_fluc, vibrato, brightness, attack, vol_peak_pos
 
 ### 逐帧合成参数生成器
 
-默认 [`ExpressionMidiDecoder`](../_upstream/midi-ddsp/midi_ddsp/modules/midi_decoder.py#L48) 将六个表情控制、MIDI pitch、onset、offset 和音符内相对位置送入 5 层全连接预处理网络，产生 256 维条件，再拼接 64 维乐器嵌入。
+默认 [`ExpressionMidiDecoder`](../references/midi-ddsp/midi_ddsp/modules/midi_decoder.py#L48) 将六个表情控制、MIDI pitch、onset、offset 和音符内相对位置送入 5 层全连接预处理网络，产生 256 维条件，再拼接 64 维乐器嵌入。
 
-默认 [`MidiToSynthAutoregDecoder`](../_upstream/midi-ddsp/midi_ddsp/modules/synth_params_decoder.py#L454) 分成两条支路：
+默认 [`MidiToSynthAutoregDecoder`](../references/midi-ddsp/midi_ddsp/modules/synth_params_decoder.py#L454) 分成两条支路：
 
 ```text
 F0 支路:

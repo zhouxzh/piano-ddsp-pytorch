@@ -30,6 +30,7 @@ from ddsp_piano.ddsp_pytorch.reverb import Reverb
 from ddsp_piano.deployment import extend_pitch_for_release
 from ddsp_piano.maestro import MidiConditioning, load_midi_conditioning
 from ddsp_piano.modules.inharm_synth import MultiInharmonic
+from ddsp_piano.versioning import model_output_label
 
 
 INPUT_NAMES = [
@@ -314,8 +315,11 @@ class _StreamingDrySynthesizer:
             dtype=torch.float32,
         )
         self.noise_tail = [torch.zeros(0, dtype=torch.float32) for _ in range(self.max_polyphony)]
-        self.generator = torch.Generator(device="cpu")
-        self.generator.manual_seed(seed)
+        self.generators = []
+        for voice in range(self.max_polyphony):
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(seed + voice)
+            self.generators.append(generator)
         self.ratios = torch.arange(1, self.n_harmonics + 1, dtype=torch.float32)
         self.noise_ir_size = 2 * (self.n_noise_bands - 1)
         self.noise_fft_size = get_fft_size(self.samples_per_frame, self.noise_ir_size)
@@ -384,7 +388,15 @@ class _StreamingDrySynthesizer:
     def _render_noise_voice(self, voice: int, magnitudes: torch.Tensor) -> torch.Tensor:
         n_frames = magnitudes.shape[0]
         n_samples = n_frames * self.samples_per_frame
-        noise = torch.rand(n_samples, generator=self.generator, dtype=torch.float32) * 2.0 - 1.0
+        noise = (
+            torch.rand(
+                n_samples,
+                generator=self.generators[voice],
+                dtype=torch.float32,
+            )
+            * 2.0
+            - 1.0
+        )
         noise_frames = noise.reshape(n_frames, self.samples_per_frame)
         impulse_response = frequency_impulse_response(
             scale_function(magnitudes).unsqueeze(0)
@@ -765,6 +777,7 @@ def main() -> int:
         raise FileNotFoundError(f"Deployment metadata not found: {metadata_path}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     sample_rate, frame_rate, max_polyphony, samples_per_frame = _validate_contract(metadata)
+    output_label = model_output_label(model_path, metadata)
     reverb_output_name = str(metadata.get("reverb_output", "reverb_ir"))
     reverb_type = str(metadata.get("reverb_ir_postprocess", {}).get("type", "ir"))
     reverb_wet_gain = float(metadata.get("reverb_wet_gain", 1.0))
@@ -792,13 +805,14 @@ def main() -> int:
         if not midi_paths:
             raise FileNotFoundError(f"No .mid or .midi files found in: {midi_dir}")
         output_dir = (
-            args.output_dir or Path("exports/midi_tests") / model_path.stem
+            args.output_dir or Path("exports/midi_tests") / output_label
         ).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = output_dir / "manifest.json"
         manifest: dict[str, object] = {
             "model": str(model_path),
             "metadata": str(metadata_path),
+            "release_version": metadata.get("release_version", output_label),
             "midi_directory": str(midi_dir),
             "piano_model": args.piano_model,
             "maestro_year": piano_models[args.piano_model],
@@ -826,7 +840,7 @@ def main() -> int:
         midi_path = args.midi.resolve()
         output_path = (
             args.output
-            or Path("exports/midi_tests") / model_path.stem / f"{midi_path.stem}.wav"
+            or Path("exports/midi_tests") / output_label / f"{midi_path.stem}.wav"
         ).resolve()
         report = _render_midi_file(
             midi_path,

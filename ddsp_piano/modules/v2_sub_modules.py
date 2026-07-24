@@ -9,10 +9,17 @@ from torch import nn
 class FiLMContextNetwork(nn.Module):
     """Context encoder with piano-conditioned feature-wise modulation."""
 
-    def __init__(self, z_dim: int = 16, hidden_dim: int = 64, context_dim: int = 32) -> None:
+    def __init__(
+        self,
+        z_dim: int = 16,
+        hidden_dim: int = 64,
+        context_dim: int = 32,
+        n_synths: int = 16,
+    ) -> None:
         super().__init__()
+        self.n_synths = n_synths
         self.conditioning_head = nn.Sequential(
-            nn.Linear(32, hidden_dim), nn.LeakyReLU(0.1),
+            nn.Linear(2 * n_synths, hidden_dim), nn.LeakyReLU(0.1),
             nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(0.1),
         )
         self.pedal_head = nn.Sequential(
@@ -34,7 +41,9 @@ class FiLMContextNetwork(nn.Module):
 
     def forward_stateful(self, conditioning, pedal, z, hidden_state=None):
         conditioning = self.collapse_conditioning(conditioning)
-        conditioning = conditioning / conditioning.new_tensor([128.0, 1.0]).repeat(16)
+        conditioning = conditioning / conditioning.new_tensor([128.0, 1.0]).repeat(
+            self.n_synths
+        )
         x = torch.cat([self.conditioning_head(conditioning), self.pedal_head(pedal)], dim=-1)
         x = torch.nn.functional.leaky_relu(self.main(x), 0.1)
         x, next_state = self.gru(x, hidden_state)
