@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>实时 MIDI 钢琴播放器</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand-block">
+        <p class="eyebrow">DDSP Piano · ONNX</p>
+        <h1>实时 MIDI 钢琴播放器</h1>
+      </div>
+      <div class="connection-state" aria-live="polite">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="statusText">未连接</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="session-band" aria-label="音频会话">
+        <div class="session-actions">
+          <button id="startButton" class="button primary" type="button">启动音频</button>
+          <button id="stopButton" class="button" type="button" disabled>停止会话</button>
+          <button id="panicButton" class="button danger" type="button" disabled>全部静音</button>
+          <span class="action-divider" aria-hidden="true"></span>
+          <button id="recordButton" class="button" type="button" disabled>录音</button>
+          <button id="downloadButton" class="icon-button" type="button" title="下载最近的录音" aria-label="下载最近的录音" disabled>↓</button>
+        </div>
+        <div class="model-readout">
+          <span id="modelName">v1 · piano_v1.onnx</span>
+          <span id="streamContract">等待建立 ONNX 音频流</span>
+        </div>
+      </section>
+
+      <section class="live-band" aria-labelledby="liveHeading">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">LIVE INPUT</p>
+            <h2 id="liveHeading">现场演奏</h2>
+          </div>
+          <div id="midiStatus" class="source-status">电脑键盘 / 屏幕键盘</div>
+        </div>
+
+        <div class="control-grid">
+          <label class="field field-wide">
+            <span>钢琴音色</span>
+            <select id="pianoModel">
+              <option value="9">音色索引 9 · 录音年份 2018</option>
+            </select>
+          </label>
+          <label class="field field-wide">
+            <span>MIDI 输入</span>
+            <select id="midiDevice" disabled>
+              <option value="">电脑键盘 / 屏幕键盘</option>
+            </select>
+          </label>
+          <button id="midiButton" class="icon-button field-button" type="button" title="启用或刷新 MIDI 设备" aria-label="启用或刷新 MIDI 设备">↻</button>
+
+          <label class="field">
+            <span>力度响应</span>
+            <select id="velocityCurve">
+              <option value="balanced" selected>均衡</option>
+              <option value="linear">线性</option>
+              <option value="soft">轻触</option>
+              <option value="firm">重触</option>
+              <option value="fixed">固定</option>
+            </select>
+          </label>
+          <label class="field range-field">
+            <span>默认力度</span>
+            <input id="velocity" type="range" min="1" max="127" value="96">
+            <output id="velocityValue" for="velocity">96</output>
+          </label>
+          <div class="velocity-readout" aria-live="polite">
+            <div class="velocity-copy">
+              <span id="dynamicMark">mf</span>
+              <span><b id="velocityRaw">96</b> → <b id="velocitySent">92</b></span>
+            </div>
+            <meter id="velocityMeter" min="0" max="127" value="92">92</meter>
+          </div>
+
+          <label class="field range-field">
+            <span>合成增益</span>
+            <input id="serverGain" type="range" min="0.25" max="8" step="0.25" value="1">
+            <output id="serverGainValue" for="serverGain">1.00×</output>
+          </label>
+          <label class="field range-field">
+            <span>播放音量</span>
+            <input id="outputGain" type="range" min="0" max="2" step="0.05" value="1">
+            <output id="outputGainValue" for="outputGain">1.00×</output>
+          </label>
+          <button id="sustainButton" class="toggle-button" type="button" aria-pressed="false" disabled>延音</button>
+        </div>
+      </section>
+
+      <section class="score-band" aria-labelledby="scoreHeading">
+        <div class="section-heading score-heading">
+          <div>
+            <p class="section-index">MIDI FILE</p>
+            <h2 id="scoreHeading">曲谱播放器</h2>
+          </div>
+          <div id="scoreMeta" class="source-status">等待曲谱清单</div>
+        </div>
+
+        <div class="score-controls">
+          <label class="field score-select-field">
+            <span>曲谱</span>
+            <select id="scoreSelect" disabled>
+              <option value="">没有可用曲谱</option>
+            </select>
+          </label>
+          <div class="score-actions">
+            <button id="scorePlayButton" class="transport-button primary" type="button" title="播放" aria-label="播放" disabled>▶</button>
+            <button id="scoreStopButton" class="transport-button" type="button" title="停止" aria-label="停止" disabled>■</button>
+            <button id="loopButton" class="transport-button" type="button" title="循环播放" aria-label="循环播放" aria-pressed="false" disabled>↻</button>
+          </div>
+          <label class="field tempo-field">
+            <span>速度</span>
+            <select id="tempoScale" disabled>
+              <option value="0.5">0.50×</option>
+              <option value="0.75">0.75×</option>
+              <option value="1" selected>1.00×</option>
+              <option value="1.25">1.25×</option>
+              <option value="1.5">1.50×</option>
+              <option value="2">2.00×</option>
+            </select>
+          </label>
+        </div>
+        <div class="score-progress">
+          <input id="scoreProgress" type="range" min="0" max="1" step="0.01" value="0" aria-label="曲谱播放位置" disabled>
+          <output id="scoreTime" for="scoreProgress">0:00 / 0:00</output>
+        </div>
+      </section>
+
+      <section class="keyboard-section" aria-labelledby="keyboardHeading">
+        <div class="keyboard-topline">
+          <div>
+            <p class="section-index">88 KEYS</p>
+            <h2 id="keyboardHeading">钢琴键盘</h2>
+          </div>
+          <div class="keyboard-tools">
+            <span id="activeNotes">无按键</span>
+            <button id="octaveDown" class="icon-button small" type="button" title="电脑键盘降低八度" aria-label="电脑键盘降低八度">−</button>
+            <output id="keyboardRange">F3–E5</output>
+            <button id="octaveUp" class="icon-button small" type="button" title="电脑键盘升高八度" aria-label="电脑键盘升高八度">＋</button>
+          </div>
+        </div>
+        <div id="keyboardScroll" class="keyboard-scroll">
+          <div id="keyboard" class="keyboard"></div>
+        </div>
+      </section>
+
+      <section class="metrics-band" aria-label="实时性能">
+        <dl>
+          <div><dt>推理块</dt><dd id="sequenceMetric">0</dd></div>
+          <div><dt>合成耗时</dt><dd id="renderMetric">-- ms</dd></div>
+          <div><dt>实时系数</dt><dd id="rtfMetric">--</dd></div>
+          <div><dt>网络延迟</dt><dd id="latencyMetric">-- ms</dd></div>
+          <div><dt>激活音符</dt><dd id="notesMetric">0</dd></div>
+          <div><dt>声部窃取</dt><dd id="stealMetric">0</dd></div>
+          <div><dt>迟到块</dt><dd id="lateMetric">0</dd></div>
+          <div><dt>削波采样</dt><dd id="clipMetric">0</dd></div>
+          <div><dt>播放缓冲</dt><dd id="bufferMetric">0 ms</dd></div>
+        </dl>
+      </section>
+
+      <section class="event-band" aria-label="会话事件">
+        <div class="event-heading">
+          <h2>会话事件</h2>
+          <button id="clearLogButton" class="icon-button small" type="button" title="清除日志" aria-label="清除日志">×</button>
+        </div>
+        <ol id="eventLog"></ol>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

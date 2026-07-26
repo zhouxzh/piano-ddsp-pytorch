@@ -146,6 +146,14 @@ def main() -> int:
     reverb_type = str(
         checkpoint_args.get("reverb_type", "fdn" if model_variant == "v2" else "ir")
     )
+    context_type = str(checkpoint_args.get("context_type", "film"))
+    monophonic_type = str(checkpoint_args.get("monophonic_type", "deep"))
+    inharmonicity_type = str(checkpoint_args.get("inharmonicity_type", "joint"))
+    if model_variant != "v2":
+        context_type = "legacy"
+        monophonic_type = "legacy"
+        inharmonicity_type = "legacy"
+    reverb_wet_gain_arg = float(checkpoint_args.get("reverb_wet_gain", 0.25))
     model_builder = get_v2_model if model_variant == "v2" else get_model
     output_names = V2_OUTPUT_NAMES if reverb_type == "fdn" else CURRENT_OUTPUT_NAMES
     model_kwargs = dict(
@@ -155,12 +163,16 @@ def main() -> int:
         sample_rate=sample_rate,
         duration=args.frames / frame_rate,
         frame_rate=frame_rate,
+        reverb_wet_gain=reverb_wet_gain_arg,
     )
     if model_variant == "v2":
         model_kwargs.update(
             n_harmonics=n_harmonics,
             n_noise_filter_banks=n_noise_bands,
             reverb_type=reverb_type,
+            context_type=context_type,
+            monophonic_type=monophonic_type,
+            inharmonicity_type=inharmonicity_type,
         )
     model = model_builder(**model_kwargs)
     model.load_state_dict(checkpoint["model"])
@@ -228,10 +240,13 @@ def main() -> int:
     output_contract = {name: _shape(value) for name, value in zip(output_names, ort_outputs)}
     operator_counts = dict(sorted(Counter(node.op_type for node in onnx_model.graph.node).items()))
     parameter_bytes = sum(parameter.numel() * parameter.element_size() for parameter in model.parameters())
+    release_version = release_version_for_variant(model_variant)
+    reverb_wet_gain = float(getattr(model.reverb_module, "wet_gain", 1.0))
     metadata = {
         "checkpoint": str(args.checkpoint),
         "checkpoint_sha256": _sha256_file(args.checkpoint),
         "onnx": str(args.output),
+        "artifact_name": args.output.stem,
         "opset": args.opset,
         "dtype": "FP32",
         "sample_rate": sample_rate,
@@ -241,13 +256,28 @@ def main() -> int:
         "release_frames": frame_rate,
         "training_phase": phase,
         "model_variant": model_variant,
-        "release_version": release_version_for_variant(model_variant),
+        "release_version": release_version,
+        "host_dsp_profile": (
+            f"{release_version}-learned-ir-wet-{reverb_wet_gain:g}"
+            if reverb_type == "ir"
+            else f"{release_version}-fdn-controls"
+        ),
         "model_config": {
             "n_harmonics": n_harmonics,
             "n_noise_bands": n_noise_bands,
             "reverb_type": reverb_type,
+            "context_type": context_type,
+            "monophonic_type": monophonic_type,
+            "inharmonicity_type": inharmonicity_type,
+            "loss_version": str(checkpoint_args.get("loss_version", "legacy")),
             "energy_loss_weight": float(checkpoint_args.get("energy_loss_weight", 0.0)),
             "onset_loss_weight": float(checkpoint_args.get("onset_loss_weight", 0.0)),
+            "velocity_loss_weight": float(
+                checkpoint_args.get("velocity_loss_weight", 0.0)
+            ),
+            "loss_calibration": checkpoint.get("loss_calibration"),
+            "initialization": checkpoint.get("initialization"),
+            "validation_corpus_sha256": checkpoint.get("validation_corpus_sha256"),
         },
         "n_harmonics": output_contract["harmonic_distribution"][-1],
         "n_noise_bands": output_contract["noise_magnitudes"][-1],
@@ -258,7 +288,7 @@ def main() -> int:
         "onnx_runtime_comparison": comparison,
         "onnx_runtime_stateful_steps": args.verify_steps,
         "reverb_output": output_names[5],
-        "reverb_wet_gain": float(getattr(model.reverb_module, "wet_gain", 1.0)),
+        "reverb_wet_gain": reverb_wet_gain,
         "reverb_ir_postprocess": (
             {
                 "embedded_in_onnx": True,

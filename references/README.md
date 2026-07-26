@@ -27,12 +27,55 @@ Each source checkout retains its own `.git` directory and upstream history.
 | `magenta-realtime` | `magenta/magenta-realtime` | `2a854047691f` | Streaming state and realtime inference |
 | `magenta-studio` | `magenta/magenta-studio` | `30bca2674f34` | Packaged MIDI generation tools |
 | `chamber-ensemble-generator` | `lukewys/chamber-ensemble-generator` | `4647edbce671` | CocoChorales generation and synthesis controls |
+| `ascend310-case3` | `zhouxzh/Ascend310` | `fb17de9dd50b` | Latest case3 intelligent-piano MIDI and keyboard interaction reference |
 
 `ascend-cann-samples` intentionally retains the local CANN 8.3 audio-device
 and frame-size compatibility patch described in
 `doc/upstream-reference-review.md`. Some imported repositories may also appear
 dirty because their Windows CRLF line endings were preserved; do not normalize
 or update a reference checkout as part of product-code changes.
+
+`ascend310-case3` is a shallow sparse checkout of the upstream repository. Its
+complete `samples/case3/` directory is available locally, including `midi.py`,
+the scenario README, and the CAD model. The realtime browser service in this
+repository reuses its F3-to-E5 key range, computer-key mapping, velocity, and
+Note On/Off interaction semantics; case3 itself does not contain a network
+audio server.
+
+`piano-keyboard-topic/` is a task-focused subset of the public repositories
+returned by the GitHub Search API for the `piano-keyboard` topic. Selection is
+based on direct relevance to the remote realtime MIDI-to-ONNX piano player, not
+only star count. The full API inventory remains local for traceability. The
+retained sources are:
+
+| Repository | Reference use |
+|---|---|
+| `Calbabreaker/piano` | Web MIDI, keyboard/touch input, velocity, sustain, MIDI-file playback, and WebSocket Note On/Off |
+| `sightread/sightread` | MIDI parsing, playback clock, input lifecycle, transport controls, and tests |
+| `scottroot/Musical-Dynamics-Training-Software` | Hardware MIDI velocity ranges, 88-key mapping, and velocity-zero Note Off handling |
+| `dy/piano-keyboard` | Minimal DOM keyboard, active-note deduplication, and reliable Note Off cleanup |
+
+The large `sightread` soundfont bank is intentionally omitted because this
+project streams ONNX-generated PCM from the server and does not use browser
+soundfont synthesis. Repositories for fingering, MIDI-to-video, Android or IoT
+keyboards, Roblox autoplay, 3D rendering, generic local synthesizers, and
+duplicate piano UIs are not retained.
+
+Direct Git downloads use one-level checkouts with Git LFS payloads disabled. When Git and
+an optional proxy are unavailable, the downloader falls back to an official
+GitHub codeload snapshot and writes `.topic-source.json` in that source tree.
+The ignored files `repositories.json`, `selected-repositories.json`,
+`sources.tsv`, and `download-failures.tsv` record the full API snapshot,
+selection, local source type/revision, and retry list. Refresh or resume with
+`scripts/download_piano_keyboard_references.sh`; set
+`GITHUB_CLONE_PROXY_PREFIX` for a Git proxy prefix, or set
+`REFERENCE_FETCH_MODE=proxy` to skip direct Git. Set it to `archive` to skip
+Git entirely and avoid a known-bad Git endpoint. During a rate limit, set
+`REFERENCE_REFRESH_INVENTORY=0` to resume from the last API snapshot. An
+optional `GITHUB_ARCHIVE_PROXY_PREFIX` accelerates only the codeload fallback
+and is recorded as `github-archive-proxy` in the source manifest.
+Set `PIANO_KEYBOARD_PRUNE_UNSELECTED=1` to remove clean, recognized checkouts
+outside the task-focused allowlist.
 
 ## Papers And Models
 

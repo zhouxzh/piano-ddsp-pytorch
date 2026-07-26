@@ -224,8 +224,30 @@ class _StreamingOnnxRunner:
         metadata: dict,
         piano_model: int,
         reverb_output_name: str,
+        intra_op_threads: int | None = None,
+        inter_op_threads: int | None = None,
     ) -> None:
-        self.session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        for name, value in (
+            ("intra_op_threads", intra_op_threads),
+            ("inter_op_threads", inter_op_threads),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive when supplied")
+        session_options = None
+        if intra_op_threads is not None or inter_op_threads is not None:
+            session_options = ort.SessionOptions()
+            session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            if intra_op_threads is not None:
+                session_options.intra_op_num_threads = intra_op_threads
+            if inter_op_threads is not None:
+                session_options.inter_op_num_threads = inter_op_threads
+        self.intra_op_threads = intra_op_threads
+        self.inter_op_threads = inter_op_threads
+        self.session = ort.InferenceSession(
+            str(model_path),
+            sess_options=session_options,
+            providers=["CPUExecutionProvider"],
+        )
         self.output_names = CONTROL_OUTPUT_NAMES + [
             reverb_output_name,
             "next_context_state",
@@ -418,26 +440,43 @@ class _StreamingDrySynthesizer:
         self.noise_tail[voice] = overlap[n_samples:].clone()
         return overlap[:n_samples]
 
-    def render(self, controls: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    def render(
+        self,
+        controls: dict[str, np.ndarray],
+        voice_envelopes: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         n_frames = controls["amplitudes"].shape[0]
         n_samples = n_frames * self.samples_per_frame
         harmonic_mix = torch.zeros(n_samples, dtype=torch.float32)
         noise_mix = torch.zeros(n_samples, dtype=torch.float32)
         tensors = {name: torch.from_numpy(value) for name, value in controls.items()}
+        envelope_tensor = None
+        if voice_envelopes is not None:
+            voice_envelopes = np.asarray(voice_envelopes, dtype=np.float32)
+            expected_shape = (self.max_polyphony, n_samples)
+            if voice_envelopes.shape != expected_shape:
+                raise ValueError(
+                    f"voice_envelopes must have shape {expected_shape}, "
+                    f"received {voice_envelopes.shape}"
+                )
+            envelope_tensor = torch.from_numpy(voice_envelopes)
         with torch.inference_mode():
             for voice in range(self.max_polyphony):
-                harmonic_mix.add_(
-                    self._render_harmonic_voice(
-                        voice,
-                        tensors["amplitudes"][:, voice],
-                        tensors["harmonic_distribution"][:, voice],
-                        tensors["inharmonicity"][:, voice],
-                        tensors["f0_hz"][:, voice],
-                    )
+                harmonic_voice = self._render_harmonic_voice(
+                    voice,
+                    tensors["amplitudes"][:, voice],
+                    tensors["harmonic_distribution"][:, voice],
+                    tensors["inharmonicity"][:, voice],
+                    tensors["f0_hz"][:, voice],
                 )
-                noise_mix.add_(
-                    self._render_noise_voice(voice, tensors["noise_magnitudes"][:, voice])
+                noise_voice = self._render_noise_voice(
+                    voice, tensors["noise_magnitudes"][:, voice]
                 )
+                if envelope_tensor is not None:
+                    harmonic_voice.mul_(envelope_tensor[voice])
+                    noise_voice.mul_(envelope_tensor[voice])
+                harmonic_mix.add_(harmonic_voice)
+                noise_mix.add_(noise_voice)
         return harmonic_mix.numpy(), noise_mix.numpy()
 
 
@@ -712,7 +751,7 @@ def main() -> int:
     parser.add_argument(
         "--model",
         type=Path,
-        default=Path("exports/piano_current_fixed.onnx"),
+        default=Path("exports/piano_v1.onnx"),
     )
     parser.add_argument(
         "--metadata",

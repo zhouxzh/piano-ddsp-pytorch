@@ -1,0 +1,80 @@
+{
+  "schema": "ddsp-piano-quality-cycle/v2",
+  "cycle_id": "v2-optimized-20260725",
+  "human_review_policy": "after_training_manual",
+  "evaluation_config": "configs/evaluation_v2.json",
+  "baseline_onnx": "exports/piano_v1.onnx",
+  "maestro_root": "data/maestro-v3.0.0",
+  "cache_dir": "cache/maestro-v3.0.0",
+  "midi_dir": "midi",
+  "run_root": "runs/quality_cycle",
+  "export_root": "exports/candidates",
+  "evaluation_root": "evaluations/quality_cycles",
+  "training": {
+    "batch_size": 1,
+    "steps_per_epoch": 2000,
+    "validation_batches": 0,
+    "validation_every_epochs": 0,
+    "balanced_validation": true,
+    "num_workers": 0,
+    "train_workers": 4,
+    "validation_workers": 0,
+    "prepare_workers": 4,
+    "learning_rate": 0.0003,
+    "phase": 1,
+    "loss_version": "perceptual_v2",
+    "dry_loss_weight": 0.0,
+    "wet_loss_weight": 0.75,
+    "reverb_regularizer_weight": 0.01,
+    "velocity_loss_every": 4,
+    "loss_calibration_batches": 512,
+    "grad_clip": 1.0,
+    "seed": 20260725,
+    "amp": true,
+    "synthesis_layout": "vectorized",
+    "optimizer_implementation": "fused",
+    "compile_training": true,
+    "compile_mode": "reduce-overhead",
+    "log_every": 100,
+    "spectral_layout": "combined",
+    "velocity_counterfactual_layout": "combined"
+  },
+  "stages": [
+    {
+      "name": "screen",
+      "target_steps": 8000,
+      "keep": 1,
+      "profile": "dev"
+    },
+    {
+      "name": "semifinal",
+      "target_steps": 20000,
+      "keep": 1,
+      "profile": "dev"
+    },
+    {
+      "name": "final",
+      "target_steps": 40000,
+      "keep": 1,
+      "profile": "release"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "v2a_optimized_b1",
+      "route": "v2a",
+      "initial_checkpoint": "runs/maestro_vst/phase1/checkpoints/best.pt",
+      "n_harmonics": 96,
+      "n_noise_bands": 64,
+      "reverb_type": "ir",
+      "reverb_wet_gain": 1.0,
+      "context_type": "legacy",
+      "monophonic_type": "legacy",
+      "inharmonicity_type": "legacy",
+      "freeze_reverb": true,
+      "energy_loss_weight": 0.1,
+      "onset_loss_weight": 0.1,
+      "velocity_loss_weight": 0.05
+    }
+  ]
+}

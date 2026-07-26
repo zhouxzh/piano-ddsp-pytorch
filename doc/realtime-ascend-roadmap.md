@@ -46,11 +46,13 @@ flowchart LR
 
 ### 阶段 2：实现 CPU 流式参考
 
-- 在 C++ 或严格固定状态的 Python reference 中实现持续相位谐波合成。
-- 实现独立声部 PRNG 和噪声 FIR overlap-add/save。
-- 实现可持续尾音的分区卷积，或将官方 FDN 作为另一候选。
-- 实现与 [`_pack_polyphony`](../ddsp_piano/maestro.py#L209) 训练编码一致的实时声部分配器，并定义大于 16 复音的窃取策略。
+- 已在严格固定状态的 Python reference 中实现持续相位谐波合成。
+- 已实现独立声部 PRNG 和噪声 FIR overlap-add/save。
+- 已实现可持续尾音的分区卷积，并支持 v2 FDN controls。
+- 已实现稳定实时声部分配器、CC64 延音和大于 16 复音的最旧声部窃取策略。
+- 已用 WebSocket/WAV 浏览器链路完成端到端 ONNX CPU 试听原型。
 - 明确 MIDI sample offset 到 250 Hz 控制帧的量化规则。
+- 将上述 Python 状态和连续性测试等价迁移到生产 C++ 宿主。
 
 此阶段先用 ONNX Runtime CPU；只有 CPU 参考连续、可听且可复现，才进入 NPU 集成。
 
@@ -120,4 +122,6 @@ flowchart LR
 - 模型 reset、声部窃取、踏板、超时和音色切换行为已定义并测试。
 - 最终 checkpoint 通过跨曲目指标与听感验收。
 
-当前项目尚未满足以上完成定义，主要缺口是宿主实时引擎与 CANN/真机验证。
+当前项目尚未满足以上完成定义。Python ONNX 网络试听原型已经完成，主要缺口
+是生产 C++/无锁音频宿主、严格长时延迟测试，以及下游仓库中的 CANN/OM/310B
+真机转换和验证。

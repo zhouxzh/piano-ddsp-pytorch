@@ -7,7 +7,7 @@ from ddsp_piano.ddsp_pytorch.core import (
 )
 from ddsp_piano.ddsp_pytorch.harmonic_oscillator import HarmonicOscillator
 
-def get_inharmonic_freq(f0_hz, inharm_coef, n_harmonics):
+def get_inharmonic_freq(f0_hz, inharm_coef, n_harmonics, harmonic_ratios=None):
     """ Create inharmonic multiples of the fundamental frequency and provide
     deviations from pure harmonic frequencies.
     Args:
@@ -23,13 +23,15 @@ def get_inharmonic_freq(f0_hz, inharm_coef, n_harmonics):
     f0_hz = f0_hz.to(torch.float32)
 
     # Integer ratios
-    int_multiplier = torch.linspace(
-        1.0,
-        float(n_harmonics),
-        int(n_harmonics),
-        device=f0_hz.device,
-        dtype=f0_hz.dtype,
-    )
+    if harmonic_ratios is not None and harmonic_ratios.numel() == int(n_harmonics):
+        int_multiplier = harmonic_ratios.to(dtype=f0_hz.dtype)
+    else:
+        int_multiplier = torch.arange(
+            1,
+            int(n_harmonics) + 1,
+            device=f0_hz.device,
+            dtype=f0_hz.dtype,
+        )
     int_multiplier = int_multiplier.unsqueeze(0).unsqueeze(0)
 
     # Inharmonicity factor
@@ -62,7 +64,8 @@ class InHarmonic(nn.Module):
                 min_frequency=20,
                 use_amplitude=True,
                 normalize_below_nyquist=True,
-                inference=False):
+                inference=False,
+                n_harmonics=None):
         super(InHarmonic, self).__init__()
         self.n_samples = n_samples
         self.sample_rate = sample_rate
@@ -71,7 +74,17 @@ class InHarmonic(nn.Module):
         self.normalize_below_nyquist = normalize_below_nyquist
         self.inference = inference
 
-        self.harmonic_synthesizer = HarmonicOscillator(sample_rate, n_samples)
+        ratios = (
+            torch.arange(1, int(n_harmonics) + 1, dtype=torch.float32)
+            if n_harmonics is not None
+            else torch.empty(0, dtype=torch.float32)
+        )
+        self.register_buffer("harmonic_ratios", ratios, persistent=False)
+        self.harmonic_synthesizer = HarmonicOscillator(
+            sample_rate,
+            n_samples,
+            n_harmonics=n_harmonics,
+        )
     def get_controls(self, 
                 amplitudes, 
                 harmonic_distribution, 
@@ -95,7 +108,10 @@ class InHarmonic(nn.Module):
         ## Compute the inharmonic frequencies and harmonic shifts
         n_harmonics = int(harmonic_distribution.shape[-1])
         inharmonic_freq, harmonic_shifts = get_inharmonic_freq(
-            f0_hz, inharm_coef, n_harmonics
+            f0_hz,
+            inharm_coef,
+            n_harmonics,
+            self.harmonic_ratios,
         )
 
         # Bandlimit the harmonic distribution
@@ -149,9 +165,18 @@ class MultiInharmonic(nn.Module):
                 min_frequency=20,
                 use_amplitude=True,
                 normalize_below_nyquist=True,
-                inference=False):
+                inference=False,
+                n_harmonics=None):
         super(MultiInharmonic, self).__init__()
-        self.single_inharmonic_module = InHarmonic(n_samples, sample_rate, min_frequency, use_amplitude, normalize_below_nyquist, inference)
+        self.single_inharmonic_module = InHarmonic(
+            n_samples,
+            sample_rate,
+            min_frequency,
+            use_amplitude,
+            normalize_below_nyquist,
+            inference,
+            n_harmonics,
+        )
 
     def get_controls(self,
                     amplitudes, #(b, n_frames, 1)

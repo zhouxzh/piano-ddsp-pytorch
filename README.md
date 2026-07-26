@@ -122,15 +122,15 @@ status every 10 minutes. Current-model training uses a 0.7 dry / 0.3 wet
 spectral objective, a fixed 0.25 wet gain, and an IR-tail constraint; phase 2
 remains an A/B experiment.
 
-To train the repaired v1 model and the independent DDSP-Piano v2-style
+To train the v1 model and the independent DDSP-Piano v2-style
 model with identical data settings, use:
 
 ```bash
 scripts/run_model_comparison.sh
 ```
 
-The script writes `piano_current_fixed.onnx` (v1 compatibility filename) and
-`piano_ddsp_v2.onnx` after running CPU ONNX checks. It then renders every
+The script writes the two canonical releases, `piano_v1.onnx` and
+`piano_v2.onnx`, after running CPU ONNX checks. It then renders every
 `.mid`/`.midi` file in `midi/` to `exports/midi_tests/v1/` and
 `exports/midi_tests/v2/` for a same-score listening comparison. Override
 `EPOCHS`, `STEPS_PER_EPOCH`,
@@ -138,21 +138,52 @@ The script writes `piano_current_fixed.onnx` (v1 compatibility filename) and
 
 ## Standardized Quality Cycle
 
-The repository now includes a deterministic MAESTRO evaluation suite, objective
-quality gates, a local 30-second blind-listening page, and a resumable four-candidate
-v2 training cycle. Start the complete cycle with:
+The repository includes a deterministic MAESTRO evaluation suite, objective
+quality gates, a local 30-second blind-listening page, and a resumable two-route
+v2 training cycle. Route v2A starts from v1 with identity-initialized single-module
+adapters; route v2B corrects and continues the full v2 network. Start it with:
 
 ```bash
 conda run -n torch python scripts/run_quality_cycle.py --device cuda
 ```
 
-The default human-review window is 30 minutes. An unanswered review becomes
-`deferred`; all listening files remain available and automated training proceeds
-to the next candidate. Late scores can still be imported. A candidate is only
+The default `configs/v2_parallel_quality_cycle.json` uses the original v1 IR at
+wet gain 1.0 as the listening baseline, keeps wet 0.25 as a diagnostic comparison,
+and evaluates candidates at 8k, 20k, and 40k steps. It uses a fixed 512-segment
+loss calibration set and the balanced 200-segment MAESTRO validation corpus.
+
+Human review is prepared only after every finalist has completed training,
+ONNX export, and release evaluation. The default unattended policy starts no
+deadline and exits as `awaiting_human_review`; all listening files remain
+available until somebody can score them. A candidate is only
 marked `promotion_ready` after both release objective gates and human gates pass,
 and the process never overwrites the official v1 files. Commands, metrics,
 thresholds, report paths, and recovery behavior are documented in
 [`doc/standardized-evaluation.md`](doc/standardized-evaluation.md).
+
+The optimized training path is opt-in and preserves the deployed ONNX boundary.
+It includes vectorized polyphonic DSP, combined spectral transforms, fused Adam,
+optional `torch.compile`, independent loader workers, and exact epoch-boundary
+RNG/shuffle resume state. Reproduce the GPU benchmark with
+`scripts/benchmark_training.py`; after the active quality cycle finishes, use
+`configs/v2_optimized_quality_cycle.json` for the conservative batch-1 rollout.
+Measured throughput, memory, pilot quality, and enablement rules are recorded in
+[`doc/training-performance-optimization.md`](doc/training-performance-optimization.md).
+
+The next quality-focused cycle starts from the completed 40k v2A checkpoint and
+trains controls, IR reverb, and a low-learning-rate joint polish as separate,
+rollback-capable stages. It adds train-only calibrated velocity-response,
+robust loudness, spectral-centroid, release-tail, and curriculum-sampling
+objectives without changing the exported neural graph:
+
+```bash
+conda run -n torch python scripts/run_quality_finetune.py \
+  --config configs/v2_quality_q1.json --device cuda
+```
+
+The cycle remains an `objective_candidate` until later human review and never
+overwrites v1 or v2. Exact milestones, gates, recovery rules, and artifact
+paths are documented in [`doc/v2-quality-q1.md`](doc/v2-quality-q1.md).
 
 ## Pipeline Smoke Test
 
@@ -180,7 +211,7 @@ synthesis, and convolution reverb.
 ```bash
 python scripts/export_onnx.py \
   --checkpoint runs/maestro_vst/phase1/checkpoints/best.pt \
-  --output exports/piano_maestro_realtime_controls.onnx
+  --output exports/piano_v1.onnx
 ```
 
 Phase 1 is the production default. Official DDSP-Piano reports that its second
@@ -200,7 +231,7 @@ Inputs:
 - `context_state [1,1,64]`: context GRU state, FP32.
 - `monophonic_state [1,16,192]`: per-slot synthesis GRU state, FP32.
 
-Outputs for the repaired current model are `amplitudes [1,1,16,1]`,
+Outputs for v1 are `amplitudes [1,1,16,1]`,
 `harmonic_distribution [1,1,16,96]`, `inharmonicity [1,1,16,1]`,
 `f0_hz [1,1,16,1]` for the phase-1 production model (or
 `[1,1,16,2]` for the phase-2 detuned-string comparison),
@@ -235,7 +266,7 @@ training-matched CPU DDSP synthesis boundary:
 
 ```bash
 conda run -n torch python scripts/render_onnx.py \
-  --model exports/piano_current_fixed.onnx \
+  --model exports/piano_v1.onnx \
   --midi-dir midi \
   --output-dir exports/midi_tests/v1
 ```
@@ -284,9 +315,9 @@ For a deterministic listening comparison, render the same MIDI directory
 through both exports:
 
 ```bash
-python scripts/render_onnx.py --model exports/piano_current_fixed.onnx \
+python scripts/render_onnx.py --model exports/piano_v1.onnx \
   --midi-dir midi --output-dir exports/midi_tests/v1
-python scripts/render_onnx.py --model exports/piano_ddsp_v2.onnx \
+python scripts/render_onnx.py --model exports/piano_v2.onnx \
   --midi-dir midi --output-dir exports/midi_tests/v2
 ```
 
@@ -294,6 +325,38 @@ The two directories use identical WAV basenames, MIDI conditioning, piano
 embedding, warm-up, release tail, and noise seed. The public version names and
 the current v2 quality diagnosis are documented in
 [`doc/model-versions.md`](doc/model-versions.md).
+
+## Realtime ONNX MIDI Player
+
+Run the v1 ONNX model as a stateful network instrument on the remote server:
+
+```bash
+conda run -n torch python scripts/realtime_midi_server.py
+```
+
+The realtime server bounds ONNX Runtime and PyTorch to one CPU thread each by
+default; this avoids oversubscribed CPU thread pools on the 32 ms streaming path.
+
+Forward the port from the local computer and open `http://localhost:8765`:
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 USER@SERVER
+```
+
+The browser sends MIDI Note On/Off, velocity, and pedal events over WebSocket.
+The server carries the ONNX recurrent/release states and host harmonic, noise,
+and partitioned-reverb states, then returns continuous mono PCM16 WAV blocks to
+the browser speakers. Note Off applies a configurable 60 ms per-voice dry-signal
+fade while preserving sustain-pedal behavior and the one-second ONNX release
+contract. When every note gate is closed, a 120 ms master fade also stops the
+remaining reverb tail. The page accepts a local Web MIDI device, an 88-key screen
+keyboard, a movable two-octave computer keyboard, or server-side playback of any
+score in `midi/`. Score transport supports pause, resume, seek, 0.5x to 2x speed,
+and looping; live input provides selectable velocity curves and raw/mapped
+velocity feedback. The received stream can be downloaded as one WAV file. Exact
+commands, score protocol, latency interpretation, direct-network TLS options,
+and v2 selection are documented in
+[`doc/realtime-onnx-midi.md`](doc/realtime-onnx-midi.md).
 
 ## Local References
 

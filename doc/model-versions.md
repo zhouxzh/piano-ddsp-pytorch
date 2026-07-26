@@ -6,15 +6,41 @@
 
 | 对外版本 | 当前 ONNX 文件 | 定位 | 试听目录 |
 | --- | --- | --- | --- |
-| v1 | `exports/piano_current_fixed.onnx` | 修复混响后的旧结构，当前人工试听基线 | `exports/midi_tests/v1/` |
-| v2 | `exports/piano_ddsp_v2.onnx` | FiLM、深层单音网络、更多谐波/噪声控制和 FDN 混响的实验结构 | `exports/midi_tests/v2/` |
+| v1 | `exports/piano_v1.onnx` | 旧版 DDSP-Piano 结构，当前人工试听基线 | `exports/midi_tests/v1/` |
+| v2 | `exports/piano_v2.onnx` | FiLM、深层单音网络、更多谐波/噪声控制和 FDN 混响的实验结构 | `exports/midi_tests/v2/` |
 
-`current-fixed` 从本记录起正式称为 **v1**。ONNX 文件名暂不改动，因为现有脚本、部署 JSON
-和外部调用可能已经引用该路径。新导出的 JSON 包含 `release_version`，后续试听输出、A/B 报告
-和文档使用 `v1`/`v2`。内部参数 `model_variant=current` 也暂时保留，用于兼容旧 checkpoint。
+从 2026-07-24 起，正式文件名只使用 `piano_v1` 和 `piano_v2`。旧路径
+`piano_current_fixed.*` 和 `piano_ddsp_v2.*` 只保留为指向正式文件的兼容符号链接，
+不得出现在新命令、报告或页面中。`phase1`、`phase2` 是训练阶段，`candidate` 是实验产物，
+都不是发布版本。内部 checkpoint 参数 `model_variant=current` 只用于兼容旧权重，对外始终显示 v1。
+
+模型版本与宿主 DSP 配置分开命名。`piano_v1.onnx` 与旧的
+`piano_maestro_realtime_controls.onnx` SHA-256 相同；此前所谓“修复混响”没有产生新神经网络，
+而是把相邻 JSON 的混响 wet gain 从旧版隐式 `1.0` 改为显式 `0.25`。正式 JSON 使用
+`host_dsp_profile=v1-learned-ir-wet-0.25` 记录该差异，不能再把后处理变化称为新模型版本。
 
 版本号只表示结构迭代顺序，不自动表示音质排序。当前 v2 应视为 `v2-experimental`，在固定
 测试集的人工盲听超过 v1 前，不应替换 v1 基线。
+
+## 2026-07-24 v2 优化实现
+
+新的 v2 不再把一次性替换全部模块当作唯一方向，而是并行保留两条候选路线：
+
+- `v2A` 从 v1 checkpoint 初始化。`residual_film`、`residual_deep` 和
+  `residual_joint` 的新增输出均为零初始化，因此加载 v1 后的首个推理输出与 v1 一致。
+  每个消融只训练一个适配器；`v2a_calibrated_v1` 则在新损失下微调 v1 主干。
+- `v2B` 从上一轮完整 v2 的 96/64 IR checkpoint 初始化，重置优化器后使用修正的损失继续训练。
+  128/96 和 FDN 暂不进入第一轮，只有 96/64 IR 通过后才扩大维度或更换混响。
+
+训练目标 `perceptual_v2` 不再计算“干声对带房间响应录音”的高权重频谱误差。权重为湿声
+MR-STFT 0.75、短时能量 0.10、起音 0.10、力度单调性 0.05；前三项根据固定 512 个训练片段的
+初始中位数自动标定。validation 固定使用按年份及 quiet/loud/dense/onset/sustain 分层的 200 个
+片段，checkpoint 保存语料 SHA-256、标定系数和初始化映射。
+
+第一轮听感基线是 v1 原始 IR 的 `wet=1.0`，`wet=0.25` 只作为诊断对照。频谱、起音和频谱质心
+先做响度匹配，绝对响度与动态误差另行报告；固定增益试听以 v1 和候选两者的最大峰值计算公共
+增益，禁止通过削波得到错误听感。完整配置见 `configs/v2_parallel_quality_cycle.json` 和
+`configs/evaluation_v2.json`。
 
 ## 为什么 v2 目前不如 v1
 
@@ -52,7 +78,7 @@ v2 的平均峰均比也从 v1 的 `18.62 dB` 降至 `17.64 dB`，动态略更�
 
 ## 后续版本规则
 
-- v1 保持为质量基线，不再使用 `current-fixed` 作为对外版本名。
+- v1 保持为质量基线，不再使用 `current-fixed` 作为对外版本名或文件名。
 - v2 在盲听和跨曲目指标超过 v1 前保持实验状态，不覆盖 v1 导出物。
 - 后续实验一次只改变一个模块，建议顺序为：先校准干声幅度与力度动态，再比较 96/128 谐波和
   64/96 噪声频带，最后单独比较 v1 IR 与 v2 FDN。
@@ -60,3 +86,10 @@ v2 的平均峰均比也从 v1 的 `18.62 dB` 降至 `17.64 dB`，动态略更�
   复音溢出记录和人工评分。模型选择应使用跨曲目均衡验证集，而不是固定前 16 个片段。
 - Ascend 310B 的神经图合同仍保持 FP32、opset 13、batch 1、单个 250 Hz 控制帧和显式 GRU
   状态；谐波、噪声与混响 DSP 继续位于 ONNX 图外。版本命名变化不改变部署输入输出合同。
+
+## 2026-07-25 Q1 候选命名
+
+下一轮音质专项周期统一使用 `v2-quality-q1-20260725` 作为实验周期名，内部候选为
+`q1_uniform`、`q1_curriculum`、`q1_reverb` 和 `q1_joint`。这些名称表示实验与阶段，不是公开
+版本。自动指标通过后状态写为 `objective_candidate`；只有后续人工盲听通过并完成显式发布动作，
+才允许命名为 v2.1。训练、ONNX、报告和 WAV 产物均放在带周期名的独立目录，不覆盖 v1/v2。

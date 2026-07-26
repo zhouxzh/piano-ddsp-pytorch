@@ -321,17 +321,21 @@ def audio_metrics(
     pred_peak = float(np.max(np.abs(prediction), initial=0.0))
     pred_rms = float(np.sqrt(np.mean(np.square(prediction, dtype=np.float64))))
     target_rms = float(np.sqrt(np.mean(np.square(target, dtype=np.float64))))
-    mrstft, convergence, log_l1 = _spectral_metrics(prediction, target, fft_sizes)
     pred_loudness = _safe_loudness(prediction, sample_rate)
     target_loudness = _safe_loudness(target, sample_rate)
+    timbre_gain_db = float(np.clip(target_loudness - pred_loudness, -24.0, 24.0))
+    matched_prediction = prediction * math.pow(10.0, timbre_gain_db / 20.0)
+    mrstft, convergence, log_l1 = _spectral_metrics(
+        matched_prediction, target, fft_sizes
+    )
     onset_window = max(1, int(round(0.016 * sample_rate)))
     onset_hop = max(1, int(round(0.004 * sample_rate)))
-    pred_envelope = _frame_rms(prediction, onset_window, onset_hop)
+    pred_envelope = _frame_rms(matched_prediction, onset_window, onset_hop)
     target_envelope = _frame_rms(target, onset_window, onset_hop)
     pred_envelope /= max(float(pred_envelope.mean()), 1e-7)
     target_envelope /= max(float(target_envelope.mean()), 1e-7)
     onset_error = float(np.mean(np.abs(np.diff(pred_envelope) - np.diff(target_envelope))))
-    pred_centroid = _spectral_centroid(prediction, sample_rate)
+    pred_centroid = _spectral_centroid(matched_prediction, sample_rate)
     target_centroid = _spectral_centroid(target, sample_rate)
     pred_crest = 20.0 * math.log10(max(pred_peak, 1e-8) / max(pred_rms, 1e-8))
     target_peak = float(np.max(np.abs(target), initial=0.0))
@@ -346,6 +350,7 @@ def audio_metrics(
         "loudness_lufs": pred_loudness,
         "target_loudness_lufs": target_loudness,
         "loudness_error_lu": abs(pred_loudness - target_loudness),
+        "timbre_match_gain_db": timbre_gain_db,
         "crest_factor_db": pred_crest,
         "crest_factor_error_db": abs(pred_crest - target_crest),
         "mrstft": mrstft,
@@ -554,6 +559,13 @@ def compare_models(
         raise ValueError("No segments were provided for comparison")
     if not math.isclose(sum(weights.values()), 1.0, rel_tol=0.0, abs_tol=1e-6):
         raise ValueError("Metric weights must sum to 1.0")
+    ratio_floors = {
+        "mrstft": 0.01,
+        "loudness_error_lu": 0.1,
+        "onset_envelope_l1": 0.001,
+        "spectral_centroid_error": 0.001,
+        "tail_decay_error_db_per_second": 0.5,
+    }
     ratios = []
     groups: dict[str, list[float]] = defaultdict(list)
     metric_ratios: dict[str, list[float]] = defaultdict(list)
@@ -565,7 +577,8 @@ def compare_models(
         for name, weight in weights.items():
             baseline_value = float(baseline["audio_metrics"][name])
             candidate_value = float(candidate["audio_metrics"][name])
-            ratio = (candidate_value + 1e-6) / (baseline_value + 1e-6)
+            floor = ratio_floors.get(name, 1e-6)
+            ratio = (candidate_value + floor) / (baseline_value + floor)
             per_metric[name] = ratio
             metric_ratios[name].append(ratio)
             weighted += weight * ratio
@@ -583,6 +596,9 @@ def compare_models(
         },
         "groups": group_summary,
         "segments": matched,
+        "ratio_floors": {
+            name: ratio_floors.get(name, 1e-6) for name in weights
+        },
     }
 
 

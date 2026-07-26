@@ -11,10 +11,17 @@ class HarmonicOscillator(nn.Module):
     def __init__(self, 
                 fs, 
                 n_samples,
+                n_harmonics=None,
                 oscillator=torch.sin):
         super(HarmonicOscillator, self).__init__()
         self.fs = fs
         self.n_samples = n_samples
+        ratios = (
+            torch.arange(1, int(n_harmonics) + 1, dtype=torch.float32)
+            if n_harmonics is not None
+            else torch.empty(0, dtype=torch.float32)
+        )
+        self.register_buffer("harmonic_ratios", ratios, persistent=False)
         
         self.oscillator = oscillator
 
@@ -28,13 +35,15 @@ class HarmonicOscillator(nn.Module):
             Shape [batch_size, :, n_harmonics].
         """
         f0 = f0.to(torch.float32)
-        f_ratios = torch.linspace(
-            1.0,
-            float(n_harmonics),
-            int(n_harmonics),
-            device=f0.device,
-            dtype=f0.dtype,
-        )
+        if self.harmonic_ratios.numel() == int(n_harmonics):
+            f_ratios = self.harmonic_ratios.to(dtype=f0.dtype)
+        else:
+            f_ratios = torch.arange(
+                1,
+                int(n_harmonics) + 1,
+                device=f0.device,
+                dtype=f0.dtype,
+            )
         f_ratios = f_ratios.unsqueeze(0).unsqueeze(0)
         harmonic_frequencies = f0 * f_ratios
         return harmonic_frequencies

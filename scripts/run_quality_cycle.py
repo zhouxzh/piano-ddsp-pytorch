@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 from ddsp_piano.evaluation import canonical_sha256, read_json, sha256_file, write_json
 
 
-DEFAULT_CONFIG = ROOT / "configs" / "v2_quality_cycle.json"
+DEFAULT_CONFIG = ROOT / "configs" / "v2_parallel_quality_cycle.json"
 
 
 def utc_now() -> str:
@@ -66,16 +66,27 @@ class QualityCycle:
     def __init__(self, config_path: Path, args: argparse.Namespace) -> None:
         self.config_path = config_path.resolve()
         self.config = read_json(self.config_path)
-        if self.config.get("schema") != "ddsp-piano-quality-cycle/v1":
+        if self.config.get("schema") not in {
+            "ddsp-piano-quality-cycle/v1",
+            "ddsp-piano-quality-cycle/v2",
+        }:
             raise ValueError("Unsupported quality-cycle config schema")
         candidates = self.config.get("candidates", [])
-        if not 1 <= len(candidates) <= 4:
-            raise ValueError("The quality cycle requires between one and four candidates")
+        if not 1 <= len(candidates) <= 8:
+            raise ValueError("The quality cycle requires between one and eight candidates")
         identifiers = [candidate["id"] for candidate in candidates]
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Candidate ids must be unique")
 
         self.device = args.device
+        self.human_review_policy = self.config.get(
+            "human_review_policy", "after_training_manual"
+        )
+        if self.human_review_policy not in {
+            "after_training_manual",
+            "after_training_timed",
+        }:
+            raise ValueError("Unsupported human_review_policy")
         self.amp = self.config["training"]["amp"] if args.amp is None else args.amp
         self.baseline = resolve_path(args.baseline or self.config["baseline_onnx"]).resolve()
         self.maestro_root = resolve_path(args.maestro_root or self.config["maestro_root"]).resolve()
@@ -238,13 +249,47 @@ class QualityCycle:
             "--n-harmonics", str(candidate["n_harmonics"]),
             "--n-noise-bands", str(candidate["n_noise_bands"]),
             "--reverb-type", candidate["reverb_type"],
+            "--reverb-wet-gain", str(candidate.get("reverb_wet_gain", 0.25)),
+            "--context-type", candidate.get("context_type", "film"),
+            "--monophonic-type", candidate.get("monophonic_type", "deep"),
+            "--inharmonicity-type", candidate.get("inharmonicity_type", "joint"),
+            "--loss-version", training.get("loss_version", "legacy"),
             "--energy-loss-weight", str(candidate["energy_loss_weight"]),
             "--onset-loss-weight", str(candidate["onset_loss_weight"]),
+            "--velocity-loss-weight", str(candidate.get("velocity_loss_weight", 0.0)),
+            "--velocity-loss-every", str(training.get("velocity_loss_every", 4)),
+            "--loss-calibration-batches", str(training.get("loss_calibration_batches", 0)),
             "--seed", str(training["seed"]),
             "--amp" if self.amp else "--no-amp",
         ]
+        optional_value_arguments = {
+            "train_workers": "--train-workers",
+            "validation_workers": "--validation-workers",
+            "validation_every_epochs": "--validation-every-epochs",
+            "synthesis_layout": "--synthesis-layout",
+            "optimizer_implementation": "--optimizer-implementation",
+            "compile_mode": "--compile-mode",
+            "log_every": "--log-every",
+            "spectral_layout": "--spectral-layout",
+            "velocity_counterfactual_layout": "--velocity-counterfactual-layout",
+        }
+        for config_name, argument_name in optional_value_arguments.items():
+            if config_name in training:
+                command.extend([argument_name, str(training[config_name])])
+        if training.get("compile_training", False):
+            command.append("--compile-training")
+        if training.get("balanced_validation", False):
+            command.append("--balanced-validation")
+        if candidate.get("freeze_reverb", False):
+            command.append("--freeze-reverb")
+        if candidate.get("adapter_only", False):
+            command.append("--adapter-only")
         if checkpoint.is_file():
             command.extend(["--resume", str(checkpoint)])
+        elif candidate.get("initial_checkpoint"):
+            command.extend(
+                ["--init-checkpoint", str(resolve_path(candidate["initial_checkpoint"]))]
+            )
         self.command(command, f"{candidate['id']}_{stage_name}_train")
         if not self.dry_run and checkpoint_step(checkpoint) < target_steps:
             raise RuntimeError(f"Training stopped before {target_steps} steps: {checkpoint}")
@@ -279,6 +324,7 @@ class QualityCycle:
         stage: dict,
         listening: bool,
         suffix: str = "",
+        prepare_listening_only: bool = False,
     ) -> dict:
         profile = stage["profile"]
         target_steps = int(stage["target_steps"])
@@ -302,6 +348,8 @@ class QualityCycle:
             ]
             if not listening:
                 command.append("--skip-listening")
+            elif prepare_listening_only:
+                command.append("--prepare-listening-only")
             self.command(command, f"{candidate['id']}_{stage['name']}{suffix}_evaluate")
         if self.dry_run:
             return {
@@ -311,14 +359,28 @@ class QualityCycle:
             }
         return read_json(report_path)
 
-    def execute_stage(self, candidate: dict, stage: dict, listening: bool = False, suffix: str = "") -> dict:
+    def execute_stage(
+        self,
+        candidate: dict,
+        stage: dict,
+        listening: bool = False,
+        suffix: str = "",
+        prepare_listening_only: bool = False,
+    ) -> dict:
         stage_key = stage["name"] + suffix
         record = self.state["candidates"][candidate["id"]]["stages"].get(stage_key)
         if record and record.get("complete"):
             return record
         checkpoint = self.train(candidate, int(stage["target_steps"]), stage_key)
         onnx_path = self.export(candidate, checkpoint, int(stage["target_steps"]), stage_key)
-        report = self.evaluate(candidate, onnx_path, stage, listening, suffix)
+        report = self.evaluate(
+            candidate,
+            onnx_path,
+            stage,
+            listening,
+            suffix,
+            prepare_listening_only,
+        )
         verdict = report["verdict"]
         record = {
             "candidate_id": candidate["id"],
@@ -343,6 +405,31 @@ class QualityCycle:
         self.state["candidates"][candidate["id"]]["stages"][stage_key] = record
         self.save("stage_complete", candidate=candidate["id"], stage=stage_key)
         return record
+
+    def activate_review_window(self, record: dict) -> str:
+        """Activate a prepared review without resetting an existing deadline."""
+        if self.dry_run:
+            record["human_status"] = "pending"
+            return "pending"
+        report_dir = Path(record["report"]).parent
+        report = read_json(report_dir / "report.json")
+        status = report["human_review"]["status"]
+        if status == "prepared":
+            self.command(
+                [
+                    str(self.python),
+                    "scripts/evaluate_model.py",
+                    "--config", str(self.runtime_evaluation_config),
+                    "activate-review",
+                    "--report-dir", str(report_dir),
+                ],
+                f"review_{report['evaluation_id'][:12]}_activate",
+            )
+            report = read_json(report_dir / "report.json")
+            status = report["human_review"]["status"]
+            self.save("human_review_activated", report=str(report_dir / "report.json"))
+        record["human_status"] = status
+        return status
 
     def wait_for_review(self, record: dict) -> str:
         report_dir = Path(record["report"]).parent
@@ -395,6 +482,33 @@ class QualityCycle:
             )
             time.sleep(poll_seconds)
 
+    def collect_review_status(self, record: dict) -> str:
+        """Import an available score file without blocking for human input."""
+        if self.dry_run:
+            record["human_status"] = "prepared"
+            return "prepared"
+        report_dir = Path(record["report"]).parent
+        report_path = report_dir / "report.json"
+        report = read_json(report_path)
+        status = report["human_review"]["status"]
+        scores_path = report_dir / "listening" / "listening_scores.json"
+        if scores_path.is_file() and status in {"prepared", "pending", "deferred"}:
+            self.command(
+                [
+                    str(self.python),
+                    "scripts/evaluate_model.py",
+                    "--config", str(self.runtime_evaluation_config),
+                    "finalize",
+                    "--report-dir", str(report_dir),
+                    "--scores", str(scores_path),
+                ],
+                f"review_{report['evaluation_id'][:12]}_finalize",
+            )
+            status = read_json(report_path)["human_review"]["status"]
+            self.save("human_review_complete", report=str(report_path), status=status)
+        record["human_status"] = status
+        return status
+
     def summarize(self) -> None:
         summaries = []
         for candidate_id, candidate in self.state["candidates"].items():
@@ -418,7 +532,15 @@ class QualityCycle:
             "official_v1_unchanged": True,
             "candidates": summaries,
             "deferred_reviews": [
-                item["report"] for item in summaries if item["human_status"] == "deferred"
+                item["report"]
+                for item in summaries
+                if item["objective_eligible"] and item["human_status"] == "deferred"
+            ],
+            "unresolved_reviews": [
+                item["report"]
+                for item in summaries
+                if item["objective_eligible"]
+                and item["human_status"] in {"prepared", "pending", "deferred"}
             ],
         }
         write_json(self.run_root / "cycle_summary.json", summary)
@@ -452,8 +574,29 @@ class QualityCycle:
             ranked = rank_candidates(records)
             if not ranked:
                 raise RuntimeError(f"Every candidate failed hard gates at stage {stage['name']}")
-            keep = min(int(stage["keep"]), len(ranked))
-            active = [record["candidate_id"] for record in ranked[:keep]]
+            if "keep_per_route" in stage:
+                selected = []
+                routes = sorted({candidates[item]["route"] for item in active})
+                for route in routes:
+                    route_ranked = rank_candidates(
+                        [
+                            record
+                            for record in records
+                            if candidates[record["candidate_id"]]["route"] == route
+                        ]
+                    )
+                    selected.extend(
+                        record["candidate_id"]
+                        for record in route_ranked[: int(stage["keep_per_route"])]
+                    )
+                if not selected:
+                    raise RuntimeError(
+                        f"Every route failed hard gates at stage {stage['name']}"
+                    )
+                active = selected
+            else:
+                keep = min(int(stage["keep"]), len(ranked))
+                active = [record["candidate_id"] for record in ranked[:keep]]
             self.state["active_candidates"] = active
             self.save("stage_ranked", stage=stage["name"], selected=active)
 
@@ -469,28 +612,60 @@ class QualityCycle:
             raise RuntimeError("No candidate passed hard gates for the final stage")
 
         reviewed = []
+        final_records = []
         for index, candidate_id in enumerate(finalists[:2]):
             suffix = "" if index == 0 else "_fallback"
             record = self.execute_stage(
-                candidates[candidate_id], final_stage, listening=True, suffix=suffix
+                candidates[candidate_id],
+                final_stage,
+                listening=True,
+                suffix=suffix,
+                prepare_listening_only=True,
             )
             reviewed.append(candidate_id)
-            if not record["objective_eligible"]:
-                continue
-            status = self.wait_for_review(record)
-            if status == "passed":
-                self.state["status"] = "promotion_ready"
-                self.state["promotion_candidate"] = candidate_id
-                break
-            # Failed or deferred human review does not block the next trained candidate.
-        else:
-            self.state["status"] = "awaiting_deferred_review" if any(
-                self.state["candidates"][candidate_id]["stages"][
-                    final_stage["name"] + ("" if index == 0 else "_fallback")
-                ]["human_status"] == "deferred"
-                for index, candidate_id in enumerate(reviewed)
-            ) else "no_promotion"
+            final_records.append(record)
         self.state["reviewed_candidates"] = reviewed
+        self.save("all_finalist_training_complete", candidates=reviewed)
+
+        eligible_records = [
+            record for record in final_records if record["objective_eligible"]
+        ]
+        if eligible_records:
+            self.save(
+                "human_review_phase_ready",
+                candidates=[record["candidate_id"] for record in eligible_records],
+                policy=self.human_review_policy,
+            )
+        if self.human_review_policy == "after_training_timed":
+            for record in eligible_records:
+                self.activate_review_window(record)
+            review_statuses = {
+                record["candidate_id"]: self.wait_for_review(record)
+                for record in eligible_records
+            }
+        else:
+            review_statuses = {
+                record["candidate_id"]: self.collect_review_status(record)
+                for record in eligible_records
+            }
+        promoted = next(
+            (
+                candidate_id
+                for candidate_id in reviewed
+                if review_statuses.get(candidate_id) == "passed"
+            ),
+            None,
+        )
+        if promoted is not None:
+            self.state["status"] = "promotion_ready"
+            self.state["promotion_candidate"] = promoted
+        elif any(
+            status in {"prepared", "pending", "deferred"}
+            for status in review_statuses.values()
+        ):
+            self.state["status"] = "awaiting_human_review"
+        else:
+            self.state["status"] = "no_promotion"
         self.save("cycle_complete", status=self.state["status"])
         self.summarize()
 

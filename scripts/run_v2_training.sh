@@ -52,18 +52,18 @@ printf '[%s] exporting and validating v2 ONNX\n' "$(date --iso-8601=seconds)"
 "${PYTHON_BIN}" scripts/export_onnx.py \
   --checkpoint "${RUN_DIR}/checkpoints/best.pt" \
   --model-variant v2 \
-  --output "${EXPORT_DIR}/piano_ddsp_v2.onnx" \
+  --output "${EXPORT_DIR}/piano_v2.onnx" \
   --verify-steps 4
 
 printf '[%s] rendering v1 MIDI reference WAVs\n' "$(date --iso-8601=seconds)"
 "${PYTHON_BIN}" scripts/render_onnx.py \
-  --model "${EXPORT_DIR}/piano_current_fixed.onnx" \
+  --model "${EXPORT_DIR}/piano_v1.onnx" \
   --midi-dir "${MIDI_DIR}" \
   --output-dir "${MIDI_TEST_DIR}/v1"
 
 printf '[%s] rendering v2 MIDI comparison WAVs\n' "$(date --iso-8601=seconds)"
 "${PYTHON_BIN}" scripts/render_onnx.py \
-  --model "${EXPORT_DIR}/piano_ddsp_v2.onnx" \
+  --model "${EXPORT_DIR}/piano_v2.onnx" \
   --midi-dir "${MIDI_DIR}" \
   --output-dir "${MIDI_TEST_DIR}/v2"
 

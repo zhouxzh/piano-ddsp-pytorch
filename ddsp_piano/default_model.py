@@ -9,6 +9,9 @@ from ddsp_piano.modules.v2_sub_modules import (
     FiLMContextNetwork,
     JointParametricInharmTuning,
     MonophonicDeepNetwork,
+    ResidualDeepMonophonicNetwork,
+    ResidualFiLMContextNetwork,
+    ResidualJointInharmonicity,
     V2FDNReverbControls,
 )
 
@@ -17,7 +20,8 @@ def build_polyphonic_ddsp_module(
     sample_rate=16000,
     duration=3,
     inference=False,
-    reverb_wet_gain=0.25):
+    reverb_wet_gain=0.25,
+    n_harmonics=96):
     """ Polyphonic bank of additive + filtered noise synthesizers.
     Args:
         - sample_rate (int): number of samples per second.
@@ -30,7 +34,12 @@ def build_polyphonic_ddsp_module(
     n_samples = int(duration * sample_rate)
 
     # Init Harmonic + Noise Synthesizers
-    harmonic_synthesizer = MultiInharmonic(n_samples, sample_rate, inference=inference)
+    harmonic_synthesizer = MultiInharmonic(
+        n_samples,
+        sample_rate,
+        inference=inference,
+        n_harmonics=n_harmonics,
+    )
     noise_synthesizer = Noise()
     reverb_effects = Reverb(wet_gain=reverb_wet_gain)
 
@@ -47,7 +56,8 @@ def get_model(
     frame_rate=250,
     sample_rate=16000,
     reverb_duration=1.5,
-    reverb_wet_gain=0.25):
+    reverb_wet_gain=0.25,
+    synthesis_layout="serial"):
     # Self-contained sub-modules
     z_encoder = sub_modules.OneHotZEncoder(n_instruments=n_piano_models, z_dim=piano_embedding_dim, n_frames=int(duration * frame_rate))
     note_release = sub_modules.NoteRelease(frame_rate=frame_rate)
@@ -71,6 +81,7 @@ def get_model(
         duration=duration,
         inference=inference,
         reverb_wet_gain=reverb_wet_gain,
+        n_harmonics=96,
     )
 
     # Full piano model definition
@@ -86,7 +97,8 @@ def get_model(
         reverb_model=reverb_model,
         harmonic_synthesizer=harmonic_synthesizer,
         noise_synthesizer=noise_synthesizer,
-        reverb_module=reverb_module
+        reverb_module=reverb_module,
+        synthesis_layout=synthesis_layout,
     )
 
     return model
@@ -105,6 +117,10 @@ def get_v2_model(
     reverb_duration=1.5,
     reverb_type="fdn",
     reverb_wet_gain=0.25,
+    context_type="film",
+    monophonic_type="deep",
+    inharmonicity_type="joint",
+    synthesis_layout="serial",
 ):
     """Build the independent PyTorch DDSP-Piano v2-style model.
 
@@ -115,6 +131,18 @@ def get_v2_model(
         raise ValueError("harmonic and noise dimensions must be positive")
     if reverb_type not in {"ir", "fdn"}:
         raise ValueError("reverb_type must be 'ir' or 'fdn'")
+    if context_type not in {"legacy", "residual_film", "film"}:
+        raise ValueError("invalid context_type")
+    if monophonic_type not in {"legacy", "residual_deep", "deep"}:
+        raise ValueError("invalid monophonic_type")
+    if inharmonicity_type not in {"legacy", "residual_joint", "joint"}:
+        raise ValueError("invalid inharmonicity_type")
+    if monophonic_type != "deep" and (
+        n_harmonics != 96 or n_noise_filter_banks != 64
+    ):
+        raise ValueError(
+            "legacy and residual monophonic networks require 96 harmonics and 64 noise bands"
+        )
     z_encoder = sub_modules.OneHotZEncoder(
         n_instruments=n_piano_models,
         z_dim=piano_embedding_dim,
@@ -135,27 +163,52 @@ def get_v2_model(
         )
         reverb_module = Reverb(wet_gain=reverb_wet_gain)
 
+    context_networks = {
+        "legacy": sub_modules.ContextNetwork,
+        "residual_film": lambda: ResidualFiLMContextNetwork(z_dim=piano_embedding_dim),
+        "film": lambda: FiLMContextNetwork(
+            z_dim=piano_embedding_dim,
+            n_synths=n_synths,
+        ),
+    }
+    monophonic_networks = {
+        "legacy": sub_modules.MonophonicNetwork,
+        "residual_deep": ResidualDeepMonophonicNetwork,
+        "deep": lambda: MonophonicDeepNetwork(
+            n_harmonics=n_harmonics,
+            n_noise_bands=n_noise_filter_banks,
+        ),
+    }
+    inharmonicity_networks = {
+        "legacy": sub_modules.InharmonicityNetwork,
+        "residual_joint": ResidualJointInharmonicity,
+        "joint": JointParametricInharmTuning,
+    }
+
     model = PianoModel(
         n_synths=n_synths,
         z_encoder=z_encoder,
         note_release=sub_modules.NoteRelease(frame_rate=frame_rate),
-        context_network=FiLMContextNetwork(
-            z_dim=piano_embedding_dim,
-            n_synths=n_synths,
-        ),
+        context_network=context_networks[context_type](),
         parallelizer=sub_modules.Parallelizer(n_synths=n_synths),
-        monophonic_network=MonophonicDeepNetwork(
-            n_harmonics=n_harmonics,
-            n_noise_bands=n_noise_filter_banks,
-        ),
-        inharm_model=JointParametricInharmTuning(),
+        monophonic_network=monophonic_networks[monophonic_type](),
+        inharm_model=inharmonicity_networks[inharmonicity_type](),
         detuner=sub_modules.Detuner(n_substrings=2),
         reverb_model=reverb_model,
         harmonic_synthesizer=MultiInharmonic(
-            int(duration * sample_rate), sample_rate, inference=inference
+            int(duration * sample_rate),
+            sample_rate,
+            inference=inference,
+            n_harmonics=n_harmonics,
         ),
         noise_synthesizer=Noise(),
         reverb_module=reverb_module,
+        synthesis_layout=synthesis_layout,
     )
     model.reverb_type = reverb_type
+    model.architecture = {
+        "context_type": context_type,
+        "monophonic_type": monophonic_type,
+        "inharmonicity_type": inharmonicity_type,
+    }
     return model

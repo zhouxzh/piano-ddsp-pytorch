@@ -131,6 +131,14 @@ def main() -> int:
 
     compatible: list[tuple[Path, dict]] = []
     for model_path in sorted(model_dir.glob("*.onnx")):
+        if model_path.is_symlink():
+            index["excluded_models"].append(
+                {
+                    "model": str(model_path),
+                    "reasons": ["compatibility alias; canonical model is rendered instead"],
+                }
+            )
+            continue
         metadata, reasons = _inspect_model(model_path)
         if reasons:
             index["excluded_models"].append(

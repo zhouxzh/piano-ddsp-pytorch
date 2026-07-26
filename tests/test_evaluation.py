@@ -46,6 +46,16 @@ class EvaluationTest(unittest.TestCase):
         self.assertTrue(all(result[f"{name}_finite"] for name in signals))
         self.assertEqual(result["wet_dry_rms_ratio"], 1.0)
 
+    def test_timbre_metrics_are_loudness_matched(self) -> None:
+        sample_rate = 16_000
+        time = np.arange(sample_rate, dtype=np.float32) / sample_rate
+        target = 0.1 * np.sin(2 * math.pi * 440.0 * time)
+        quiet = target * 0.25
+        metrics = audio_metrics(quiet, target, sample_rate, [256, 128, 64])
+        self.assertGreater(metrics["loudness_error_lu"], 6.0)
+        self.assertLess(metrics["mrstft"], 0.02)
+        self.assertAlmostEqual(metrics["timbre_match_gain_db"], 12.0, delta=0.5)
+
 
 if __name__ == "__main__":
     unittest.main()

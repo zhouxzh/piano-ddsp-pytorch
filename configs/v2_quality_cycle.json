@@ -2,7 +2,7 @@
   "schema": "ddsp-piano-quality-cycle/v1",
   "cycle_id": "v2-quality-20260723",
   "evaluation_config": "configs/evaluation_v1.json",
-  "baseline_onnx": "exports/piano_current_fixed.onnx",
+  "baseline_onnx": "exports/piano_v1.onnx",
   "maestro_root": "data/maestro-v3.0.0",
   "cache_dir": "cache/maestro-v3.0.0",
   "midi_dir": "midi",

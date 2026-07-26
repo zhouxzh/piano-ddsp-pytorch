@@ -59,23 +59,23 @@ fi
 
 "${PYTHON_BIN}" scripts/export_onnx.py \
   --checkpoint "${V1_DIR}/checkpoints/best.pt" \
-  --output "${EXPORT_DIR}/piano_current_fixed.onnx"
+  --output "${EXPORT_DIR}/piano_v1.onnx"
 
 "${PYTHON_BIN}" scripts/export_onnx.py \
   --checkpoint "${V2_DIR}/checkpoints/best.pt" \
   --model-variant v2 \
-  --output "${EXPORT_DIR}/piano_ddsp_v2.onnx"
+  --output "${EXPORT_DIR}/piano_v2.onnx"
 
 "${PYTHON_BIN}" scripts/render_onnx.py \
-  --model "${EXPORT_DIR}/piano_current_fixed.onnx" \
+  --model "${EXPORT_DIR}/piano_v1.onnx" \
   --midi-dir "${MIDI_DIR}" \
   --output-dir "${MIDI_TEST_DIR}/v1"
 
 "${PYTHON_BIN}" scripts/render_onnx.py \
-  --model "${EXPORT_DIR}/piano_ddsp_v2.onnx" \
+  --model "${EXPORT_DIR}/piano_v2.onnx" \
   --midi-dir "${MIDI_DIR}" \
   --output-dir "${MIDI_TEST_DIR}/v2"
 
 printf 'Comparison exports written to:\n  %s\n  %s\n' \
-  "${EXPORT_DIR}/piano_current_fixed.onnx" \
-  "${EXPORT_DIR}/piano_ddsp_v2.onnx"
+  "${EXPORT_DIR}/piano_v1.onnx" \
+  "${EXPORT_DIR}/piano_v2.onnx"

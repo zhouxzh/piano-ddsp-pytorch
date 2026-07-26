@@ -9,7 +9,13 @@ from pathlib import Path
 import numpy as np
 
 from ddsp_piano.evaluation import LISTENING_SCHEMA, read_json, write_json
-from ddsp_piano.listening import DIMENSIONS, create_listening_package, defer_review, finalize_review
+from ddsp_piano.listening import (
+    DIMENSIONS,
+    activate_review,
+    create_listening_package,
+    defer_review,
+    finalize_review,
+)
 
 
 class ListeningTest(unittest.TestCase):
@@ -81,6 +87,57 @@ class ListeningTest(unittest.TestCase):
             self.assertTrue(finalized["human_review"]["submitted_after_deadline"])
             self.assertTrue(finalized["verdict"]["promotion_eligible"])
             self.assertTrue((output / "listening" / "index.html").is_file())
+
+    def test_fixed_gain_uses_louder_side_as_reference(self) -> None:
+        item = self._item()
+        item["candidate_full_peak"] = 2.0
+        item["candidate"] = {
+            name: value * 20.0 for name, value in item["candidate"].items()
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            review = create_listening_package(
+                Path(temporary), "evaluation-clip", [item], 30, -23.0, -3.0
+            )
+        self.assertEqual(review["clipped_samples"], 0)
+        self.assertEqual(review["fixed_gain_reference_peak"], 2.0)
+
+    def test_prepared_review_deadline_starts_only_after_activation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            review = create_listening_package(
+                output,
+                "evaluation-prepared",
+                [self._item()],
+                30,
+                -23.0,
+                -3.0,
+                start_review=False,
+            )
+            self.assertEqual(review["status"], "prepared")
+            self.assertIsNone(review["deadline"])
+            report = {
+                "evaluation_id": "evaluation-prepared",
+                "human_review": review,
+                "verdict": {
+                    "objective_eligible": True,
+                    "human_status": "prepared",
+                    "promotion_eligible": False,
+                },
+            }
+            write_json(output / "report.json", report)
+
+            activated = activate_review(output, 30)
+            self.assertEqual(activated["human_review"]["status"], "pending")
+            self.assertIsNotNone(activated["human_review"]["deadline"])
+            first_deadline = activated["human_review"]["deadline"]
+            activated_again = activate_review(output, 60)
+            self.assertEqual(
+                activated_again["human_review"]["deadline"], first_deadline
+            )
+            page = (output / "listening" / "index.html").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(first_deadline, page)
 
 
 if __name__ == "__main__":

@@ -30,7 +30,8 @@ class PianoModel(nn.Module):
         reverb_model=None,
         harmonic_synthesizer=None,
         noise_synthesizer=None,
-        reverb_module=None):
+        reverb_module=None,
+        synthesis_layout="serial"):
         super(PianoModel, self).__init__()
         self.n_synths = n_synths
         self.z_encoder = z_encoder # num params ok 
@@ -44,6 +45,13 @@ class PianoModel(nn.Module):
         self.noise_synthesizer = noise_synthesizer # num params ok
         self.reverb_module = reverb_module  # num params ok
         self.reverb_model = reverb_model # num params ok
+        self.set_synthesis_layout(synthesis_layout)
+
+    def set_synthesis_layout(self, layout):
+        """Select the training-only polyphonic DSP execution layout."""
+        if layout not in {"serial", "vectorized"}:
+            raise ValueError("synthesis_layout must be 'serial' or 'vectorized'")
+        self.synthesis_layout = layout
         
     def alternate_training(self, first_phase=True):
         """Toggle trainability of submodules for the 1st or 2nd training phase.
@@ -78,6 +86,77 @@ class PianoModel(nn.Module):
                                                params["harmonic_shifts"],
                                                params["f0_hz"])
         return harmonic_signal
+
+    def _synthesize_voices_serial(
+        self,
+        amplitudes_all,
+        harmonics_all,
+        inharm_all,
+        f0_all,
+        magnitudes_all,
+    ):
+        """Reference implementation that synthesizes one polyphony slot at a time."""
+        signal = None
+        for voice in range(self.n_synths):
+            harmonic = self.synthesize_harmonic_part(
+                self.harmonic_synthesizer,
+                amplitudes_all[voice],
+                harmonics_all[voice],
+                inharm_all[voice],
+                f0_all[voice],
+            )
+            noise = self.noise_synthesizer(harmonic, magnitudes_all[voice])
+            voice_signal = harmonic + noise
+            signal = voice_signal if signal is None else signal + voice_signal
+        return signal
+
+    def _synthesize_voices_vectorized(
+        self,
+        amplitudes_all,
+        harmonics_all,
+        inharm_all,
+        f0_all,
+        magnitudes_all,
+    ):
+        """Merge polyphony and batch axes so the DSP bank runs in one call."""
+        voices, batch = amplitudes_all.shape[:2]
+
+        def merge(value):
+            return value.reshape(voices * batch, *value.shape[2:])
+
+        harmonic = self.synthesize_harmonic_part(
+            self.harmonic_synthesizer,
+            merge(amplitudes_all),
+            merge(harmonics_all),
+            merge(inharm_all),
+            merge(f0_all),
+        )
+        noise = self.noise_synthesizer(harmonic, merge(magnitudes_all))
+        return (harmonic + noise).reshape(voices, batch, -1).sum(dim=0)
+
+    def synthesize_voices(
+        self,
+        amplitudes_all,
+        harmonics_all,
+        inharm_all,
+        f0_all,
+        magnitudes_all,
+    ):
+        if self.synthesis_layout == "vectorized":
+            return self._synthesize_voices_vectorized(
+                amplitudes_all,
+                harmonics_all,
+                inharm_all,
+                f0_all,
+                magnitudes_all,
+            )
+        return self._synthesize_voices_serial(
+            amplitudes_all,
+            harmonics_all,
+            inharm_all,
+            f0_all,
+            magnitudes_all,
+        )
 
     def predict_controls(self, conditioning, pedal, piano_model):
         """Return fixed-shape neural controls before non-exportable DSP synthesis."""
@@ -157,23 +236,13 @@ class PianoModel(nn.Module):
             conditioning, pedal, piano_model
         )
 
-        amplitudes = amplitudes_all[0]
-        harmonic_distribution = harmonics_all[0]
-        inharm_coef = inharm_all[0]
-        f0_hz = f0_all[0]
-        magnitudes = magnitudes_all[0]
-        harmonic_part = self.synthesize_harmonic_part(self.harmonic_synthesizer, amplitudes, harmonic_distribution, inharm_coef, f0_hz) 
-        noise_part = self.noise_synthesizer(harmonic_part, magnitudes)
-        signal = harmonic_part + noise_part
-        for i in range(1, self.n_synths):
-            amplitudes = amplitudes_all[i]
-            harmonic_distribution = harmonics_all[i]
-            inharm_coef = inharm_all[i]
-            f0_hz = f0_all[i]
-            magnitudes = magnitudes_all[i]
-            sub_harmonic = self.synthesize_harmonic_part(self.harmonic_synthesizer, amplitudes, harmonic_distribution, inharm_coef, f0_hz)
-            sub_noise = self.noise_synthesizer(sub_harmonic, magnitudes)
-            signal += (sub_harmonic + sub_noise)
+        signal = self.synthesize_voices(
+            amplitudes_all,
+            harmonics_all,
+            inharm_all,
+            f0_all,
+            magnitudes_all,
+        )
         
         # Keep the dry branch connected to the graph so the training objective
         # can explicitly protect the oscillator quality from an over-large IR.

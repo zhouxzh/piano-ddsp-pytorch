@@ -110,7 +110,7 @@ def select_excerpt_frames(
     return best_start, best_start + excerpt_frames
 
 
-def _html(trials: list[dict], evaluation_id: str, deadline: str) -> str:
+def _html(trials: list[dict], evaluation_id: str, deadline: str | None) -> str:
     public_trials = [
         {
             "id": trial["id"],
@@ -173,7 +173,7 @@ const labels={{timbre:'音色',attack:'起音',dynamics:'力度',sustain:'延音
 const key='ddsp-piano-listening:'+evaluationId;
 let state=JSON.parse(localStorage.getItem(key)||'{{"index":0,"answers":{{}}}}');
 const root=document.getElementById('trial'), progress=document.getElementById('progress');
-document.getElementById('deadline').textContent='截止 '+new Date(deadline).toLocaleString();
+document.getElementById('deadline').textContent=deadline?'截止 '+new Date(deadline).toLocaleString():'等待全部训练完成后开启';
 function esc(value) {{ const el=document.createElement('span'); el.textContent=value; return el.innerHTML; }}
 function emptyAnswer() {{ const ratings={{}}; dimensions.forEach(d=>ratings[d]={{A:3,B:3}}); return {{preference:null,ratings,severe_artifact:{{A:false,B:false}},notes:''}}; }}
 function save() {{ localStorage.setItem(key,JSON.stringify(state)); }}
@@ -211,16 +211,23 @@ def create_listening_package(
     timeout_minutes: int,
     target_lufs: float,
     fixed_target_peak_dbfs: float,
+    start_review: bool = True,
 ) -> dict:
     listening_dir = output_dir / "listening"
     private_dir = output_dir / "private"
     listening_dir.mkdir(parents=True, exist_ok=True)
     private_dir.mkdir(parents=True, exist_ok=True)
     created = datetime.now(timezone.utc)
-    deadline = (created + timedelta(minutes=timeout_minutes)).isoformat()
+    deadline = (
+        (created + timedelta(minutes=timeout_minutes)).isoformat()
+        if start_review
+        else None
+    )
     target_peak = math.pow(10.0, fixed_target_peak_dbfs / 20.0)
     baseline_peak = max(float(item["baseline_full_peak"]) for item in items)
-    fixed_gain = target_peak / max(baseline_peak, 1e-8)
+    candidate_peak = max(float(item["candidate_full_peak"]) for item in items)
+    reference_peak = max(baseline_peak, candidate_peak)
+    fixed_gain = target_peak / max(reference_peak, 1e-8)
     trials = []
     mapping = {}
     clipping = 0
@@ -267,21 +274,67 @@ def create_listening_package(
     (listening_dir / "index.html").write_text(
         _html(trials, evaluation_id, deadline), encoding="utf-8"
     )
+    write_json(
+        listening_dir / "trials.json",
+        {
+            "schema": LISTENING_SCHEMA,
+            "evaluation_id": evaluation_id,
+            "trials": trials,
+        },
+    )
     write_json(private_dir / "blind_mapping.json", {"schema": LISTENING_SCHEMA, "mapping": mapping})
     return {
         "schema": LISTENING_SCHEMA,
-        "status": "pending",
+        "status": "pending" if start_review else "prepared",
         "created_at": created.isoformat(),
+        "activated_at": created.isoformat() if start_review else None,
         "deadline": deadline,
         "timeout_minutes": timeout_minutes,
         "trials": len(trials),
         "fixed_gain": fixed_gain,
+        "fixed_gain_reference_peak": reference_peak,
+        "baseline_full_peak": baseline_peak,
+        "candidate_full_peak": candidate_peak,
         "fixed_target_peak_dbfs": fixed_target_peak_dbfs,
         "target_lufs": target_lufs,
         "clipped_samples": clipping,
         "page": str((listening_dir / "index.html").resolve()),
         "scores_file": str((listening_dir / "listening_scores.json").resolve()),
     }
+
+
+def activate_review(report_dir: Path, timeout_minutes: int) -> dict:
+    """Start the human-review clock after every finalist has finished training."""
+    report_path = report_dir / "report.json"
+    report = read_json(report_path)
+    review = report.get("human_review")
+    if not review:
+        raise ValueError("The report has no listening task")
+    if review.get("status") != "prepared":
+        return report
+    if timeout_minutes < 0:
+        raise ValueError("Review timeout must be non-negative")
+    manifest = read_json(report_dir / "listening" / "trials.json")
+    if manifest.get("evaluation_id") != report.get("evaluation_id"):
+        raise ValueError("Listening trial manifest belongs to another evaluation")
+    activated = datetime.now(timezone.utc)
+    deadline = (activated + timedelta(minutes=timeout_minutes)).isoformat()
+    review.update(
+        {
+            "status": "pending",
+            "activated_at": activated.isoformat(),
+            "deadline": deadline,
+            "timeout_minutes": timeout_minutes,
+        }
+    )
+    report["verdict"]["human_status"] = "pending"
+    report["verdict"]["promotion_eligible"] = False
+    (report_dir / "listening" / "index.html").write_text(
+        _html(manifest["trials"], report["evaluation_id"], deadline),
+        encoding="utf-8",
+    )
+    write_json(report_path, report)
+    return report
 
 
 def defer_review(report_dir: Path) -> dict:
@@ -346,12 +399,15 @@ def finalize_review(report_dir: Path, scores_path: Path, config: dict) -> dict:
     )
     destination = report_dir / "listening" / "listening_scores.json"
     write_json(destination, scores)
+    deadline = report["human_review"].get("deadline")
     report["human_review"].update(
         {
             "status": "passed" if human_passed else "failed",
             "completed_at": scores.get("completed_at", utc_now()),
-            "submitted_after_deadline": datetime.now(timezone.utc)
-            > datetime.fromisoformat(report["human_review"]["deadline"]),
+            "submitted_after_deadline": bool(
+                deadline
+                and datetime.now(timezone.utc) > datetime.fromisoformat(deadline)
+            ),
             "preference_rate": preference_rate,
             "dimension_mean_delta": mean_deltas,
             "candidate_severe_artifacts": repeated_artifacts,

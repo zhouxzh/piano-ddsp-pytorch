@@ -11,5 +11,8 @@
 - [MIDI 测试曲目与来源](midi-test-corpus.md)
 - [模型版本命名与 v2 音质分析](model-versions.md)
 - [标准化测试、盲听超时与自动优化流程](standardized-evaluation.md)
+- [训练性能优化与验证记录](training-performance-optimization.md)
+- [v2 Q1 音质专项微调](v2-quality-q1.md)
 - [Magenta 参考代码、论文与数据集](magenta-reference-materials.md)
 - [Magenta RealTime 2 技术参考](magenta-realtime-2.md)
+- [ONNX 实时 MIDI 网络试听](realtime-onnx-midi.md)

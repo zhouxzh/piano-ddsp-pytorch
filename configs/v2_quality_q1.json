@@ -1,0 +1,90 @@
+{
+  "schema": "ddsp-piano-quality-finetune/v1",
+  "cycle_id": "v2-quality-q1-20260725",
+  "base_checkpoint": "runs/quality_cycle/v2-parallel-20260724/candidates/v2a_calibrated_v1/checkpoints/last.pt",
+  "base_onnx": "exports/candidates/v2-parallel-20260724/v2a_calibrated_v1/step_40000.onnx",
+  "anchor_onnx": "exports/piano_v1.onnx",
+  "evaluation_config": "configs/evaluation_v2_q1.json",
+  "maestro_root": "data/maestro-v3.0.0",
+  "cache_dir": "cache/maestro-v3.0.0",
+  "midi_dir": "midi",
+  "quality_manifest": "cache/quality/v2-quality-q1-train.json",
+  "run_root": "runs/quality_finetune",
+  "export_root": "exports/candidates",
+  "evaluation_root": "evaluations/quality_finetune",
+  "listening_root": "outputs/listening",
+  "training": {
+    "batch_size": 4,
+    "train_workers": 4,
+    "loss_calibration_batches": 512,
+    "velocity_loss_every": 4,
+    "grad_clip": 1.0,
+    "log_every": 100,
+    "seed": 20260725
+  },
+  "screen_candidates": [
+    {"id": "q1_uniform", "sampling_mode": "uniform"},
+    {"id": "q1_curriculum", "sampling_mode": "curriculum"}
+  ],
+  "phases": {
+    "controls": {
+      "trainable_scope": "controls",
+      "learning_rate": 0.0001,
+      "profile": "dev",
+      "milestones_examples": [4000, 8000],
+      "loss_weights": {
+        "wet": 0.60,
+        "energy": 0.10,
+        "onset": 0.10,
+        "centroid": 0.08,
+        "tail": 0.07,
+        "velocity": 0.05
+      }
+    },
+    "reverb": {
+      "trainable_scope": "reverb",
+      "learning_rate": 0.00003,
+      "profile": "dev",
+      "milestones_examples": [2000, 4000],
+      "loss_weights": {
+        "wet": 0.70,
+        "energy": 0.08,
+        "onset": 0.04,
+        "centroid": 0.06,
+        "tail": 0.12,
+        "velocity": 0.0
+      }
+    },
+    "joint": {
+      "trainable_scope": "joint",
+      "learning_rate": 0.00002,
+      "profile": "dev",
+      "milestones_examples": [2000, 4000],
+      "loss_weights": {
+        "wet": 0.60,
+        "energy": 0.10,
+        "onset": 0.10,
+        "centroid": 0.08,
+        "tail": 0.07,
+        "velocity": 0.05
+      }
+    }
+  },
+  "objective_gate": {
+    "composite_median": 0.98,
+    "group_median": 1.02,
+    "mrstft_median_ratio": 1.005,
+    "latency_p95_ratio": 1.05,
+    "loudness_p95": 5.5,
+    "centroid_p95": 0.0165,
+    "tail_p95": 8.10
+  },
+  "reverb_delta_gate": {
+    "maximum_composite_ratio": 1.005,
+    "maximum_loudness_regression_lu": 0.25,
+    "required_tail_or_centroid_improvement": 0.05
+  },
+  "anchor_gate": {
+    "composite_median": 0.9339
+  }
+}

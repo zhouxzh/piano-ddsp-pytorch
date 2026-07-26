@@ -5,8 +5,11 @@ import unittest
 
 import numpy as np
 import torch
+import tempfile
+from pathlib import Path
 
 from ddsp_piano.default_model import get_model, get_v2_model
+from train import load_partial_initialization
 from ddsp_piano.ddsp_pytorch.fdn import fdn_impulse_response
 from ddsp_piano.ddsp_pytorch.reverb import Reverb
 from ddsp_piano.ddsp_pytorch.core import remove_frequencies_above_nyquist
@@ -208,6 +211,54 @@ class DeploymentTest(unittest.TestCase):
         self.assertEqual(tuple(outputs[1].shape), (1, 1, 2, 96))
         self.assertEqual(tuple(outputs[4].shape), (1, 1, 2, 64))
         self.assertEqual(tuple(outputs[5].shape), (1, 24_000))
+
+    def test_v2a_residual_film_is_identity_after_v1_initialization(self) -> None:
+        kwargs = {
+            "n_synths": 16,
+            "n_piano_models": 1,
+            "duration": 1 / 250,
+            "frame_rate": 250,
+            "sample_rate": 16_000,
+            "reverb_wet_gain": 1.0,
+        }
+        torch.manual_seed(7)
+        v1 = get_model(**kwargs).eval()
+        v2a = get_v2_model(
+            **kwargs,
+            n_harmonics=96,
+            n_noise_filter_banks=64,
+            reverb_type="ir",
+            context_type="residual_film",
+            monophonic_type="legacy",
+            inharmonicity_type="legacy",
+        ).eval()
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = Path(temporary) / "v1.pt"
+            torch.save({"model": v1.state_dict()}, checkpoint)
+            report = load_partial_initialization(v2a, checkpoint, torch.device("cpu"))
+        self.assertGreater(report["loaded_tensors"], 0)
+        inputs = (
+            torch.cat(
+                [
+                    torch.tensor([[[[60.0, 0.8]]]]),
+                    torch.zeros(1, 1, 15, 2),
+                ],
+                dim=2,
+            ),
+            torch.zeros(1, 1, 4),
+            torch.zeros(1, dtype=torch.int32),
+            torch.cat(
+                [torch.tensor([[[[60.0]]]]), torch.zeros(1, 1, 15, 1)],
+                dim=2,
+            ),
+            torch.zeros(1, 1, 64),
+            torch.zeros(1, 16, 192),
+        )
+        with torch.inference_mode():
+            v1_outputs = PianoRealtimeControlModel(v1)(*inputs)
+            v2a_outputs = PianoRealtimeControlModel(v2a)(*inputs)
+        for expected, actual in zip(v1_outputs, v2a_outputs):
+            torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0)
 
     def test_fdn_controls_are_bounded_and_renderable(self) -> None:
         controls = torch.zeros(1, 9)

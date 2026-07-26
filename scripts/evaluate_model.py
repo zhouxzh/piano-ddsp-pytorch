@@ -33,6 +33,7 @@ from ddsp_piano.evaluation import (
     write_metrics_csv,
 )
 from ddsp_piano.listening import (
+    activate_review,
     create_listening_package,
     defer_review,
     finalize_review,
@@ -62,11 +63,15 @@ def _preprocess(config: dict) -> PreprocessConfig:
     return PreprocessConfig(**config["preprocess"])
 
 
-def _metadata(model_path: Path) -> dict:
+def _metadata(model_path: Path, overrides: dict | None = None) -> dict:
     path = model_path.with_suffix(".json")
     if not path.is_file():
         raise FileNotFoundError(f"Deployment JSON not found: {path}")
-    return read_json(path)
+    metadata = read_json(path)
+    if overrides:
+        metadata.update(overrides)
+        metadata["effective_render_overrides"] = dict(overrides)
+    return metadata
 
 
 def _validate_pair(baseline: dict, candidate: dict, corpus: dict) -> None:
@@ -314,6 +319,7 @@ def _cached_segments(
         "schema": "ddsp-piano-segment-cache/v1",
         "model_sha256": model_sha256,
         "model_metadata_sha256": sha256_file(model_path.with_suffix(".json")),
+        "effective_metadata_sha256": canonical_sha256(metadata),
         "corpus_sha256": corpus["corpus_sha256"],
         "render": config["render"],
         "metrics": config["metrics"],
@@ -393,9 +399,18 @@ def run_command(args: argparse.Namespace, config: dict) -> int:
         )
     if corpus.get("preprocess") != config["preprocess"]:
         raise ValueError("Corpus preprocessing does not match the evaluation config")
-    baseline_metadata = _metadata(baseline_path)
+    baseline_overrides = config.get("baseline_render_overrides", {})
+    baseline_metadata = _metadata(baseline_path, baseline_overrides)
+    diagnostic_overrides = config.get("diagnostic_baseline_render_overrides")
+    diagnostic_metadata = (
+        _metadata(baseline_path, diagnostic_overrides)
+        if diagnostic_overrides is not None
+        else None
+    )
     candidate_metadata = _metadata(candidate_path)
     _validate_pair(baseline_metadata, candidate_metadata, corpus)
+    if diagnostic_metadata is not None:
+        _validate_pair(diagnostic_metadata, candidate_metadata, corpus)
     allowed = set(config["allowed_operators"])
     iterations = int(config["profiles"][args.profile]["latency_iterations"])
     baseline_contract = inspect_onnx_model(
@@ -485,6 +500,16 @@ def run_command(args: argparse.Namespace, config: dict) -> int:
             "baseline": baseline_contract,
             "candidate": candidate_contract,
         },
+        "render_profiles": {
+            "baseline": {
+                "overrides": baseline_overrides,
+                "effective_reverb_wet_gain": _render_arguments(baseline_metadata)[2],
+            },
+            "candidate": {
+                "overrides": {},
+                "effective_reverb_wet_gain": _render_arguments(candidate_metadata)[2],
+            },
+        },
         "segment_cache": {
             "baseline": {"path": str(baseline_cache), "hit": baseline_cache_hit},
             "candidate": {"path": str(candidate_cache), "hit": candidate_cache_hit},
@@ -506,6 +531,31 @@ def run_command(args: argparse.Namespace, config: dict) -> int:
             candidate_path, candidate_metadata, corpus, config
         ),
     }
+    if diagnostic_metadata is not None:
+        diagnostic_segments, diagnostic_cache, diagnostic_cache_hit = _cached_segments(
+            baseline_path,
+            diagnostic_metadata,
+            baseline_contract["sha256"],
+            corpus,
+            config,
+        )
+        report["render_profiles"]["diagnostic_baseline"] = {
+            "overrides": diagnostic_overrides,
+            "effective_reverb_wet_gain": _render_arguments(diagnostic_metadata)[2],
+        }
+        report["segment_cache"]["diagnostic_baseline"] = {
+            "path": str(diagnostic_cache),
+            "hit": diagnostic_cache_hit,
+        }
+        report["segments"]["diagnostic_baseline"] = diagnostic_segments
+        report["summary"]["diagnostic_baseline"] = summarize_segments(
+            diagnostic_segments
+        )
+        report["diagnostic_comparison"] = compare_models(
+            diagnostic_segments,
+            candidate_segments,
+            config["metrics"]["weights"],
+        )
     listening_enabled = (
         not args.skip_listening
         and args.profile in config["listening"]["enabled_profiles"]
@@ -526,6 +576,7 @@ def run_command(args: argparse.Namespace, config: dict) -> int:
             int(config["listening"]["human_review_timeout_minutes"]),
             float(config["listening"]["target_lufs"]),
             float(config["listening"]["fixed_target_peak_dbfs"]),
+            start_review=not args.prepare_listening_only,
         )
     else:
         report["human_review"] = {"status": "not_generated"}
@@ -564,6 +615,20 @@ def finalize_command(args: argparse.Namespace, config: dict) -> int:
     return 0
 
 
+def activate_review_command(args: argparse.Namespace, config: dict) -> int:
+    timeout = (
+        args.timeout_minutes
+        if args.timeout_minutes is not None
+        else int(config["listening"]["human_review_timeout_minutes"])
+    )
+    report = activate_review(args.report_dir.resolve(), timeout)
+    (args.report_dir / "report.md").write_text(
+        markdown_report(report), encoding="utf-8"
+    )
+    print(json.dumps(report["human_review"], indent=2, ensure_ascii=False))
+    return 0
+
+
 def defer_command(args: argparse.Namespace) -> int:
     report = defer_review(args.report_dir.resolve())
     (args.report_dir / "report.md").write_text(markdown_report(report), encoding="utf-8")
@@ -592,6 +657,18 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--output-dir", type=Path)
     run.add_argument("--midi-dir", type=Path, default=ROOT / "midi")
     run.add_argument("--skip-listening", action="store_true")
+    run.add_argument(
+        "--prepare-listening-only",
+        action="store_true",
+        help="Generate listening assets without starting the review deadline",
+    )
+
+    activate = commands.add_parser(
+        "activate-review",
+        help="Start a prepared listening task after finalist training finishes",
+    )
+    activate.add_argument("--report-dir", type=Path, required=True)
+    activate.add_argument("--timeout-minutes", type=int)
 
     finalize = commands.add_parser("finalize", help="Import blind-listening scores")
     finalize.add_argument("--report-dir", type=Path, required=True)
@@ -611,6 +688,8 @@ def main() -> int:
         return run_command(args, config)
     if args.command == "finalize":
         return finalize_command(args, config)
+    if args.command == "activate-review":
+        return activate_review_command(args, config)
     if args.command == "defer":
         return defer_command(args)
     raise AssertionError(args.command)

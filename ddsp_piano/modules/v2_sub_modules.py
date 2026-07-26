@@ -5,6 +5,106 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from ddsp_piano.modules import sub_modules
+
+
+class ResidualFiLMContextNetwork(nn.Module):
+    """Identity-initialized FiLM adapter around the v1 context network."""
+
+    def __init__(self, z_dim: int = 16, context_dim: int = 32) -> None:
+        super().__init__()
+        self.base = sub_modules.ContextNetwork()
+        self.film = nn.Linear(z_dim, context_dim * 2)
+        nn.init.zeros_(self.film.weight)
+        nn.init.zeros_(self.film.bias)
+
+    @property
+    def gru(self) -> nn.GRU:
+        return self.base.gru
+
+    def _adapt(self, context: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+        z = z.expand(-1, context.shape[1], -1)
+        scale, bias = self.film(z).chunk(2, dim=-1)
+        return context * (1.0 + scale) + bias
+
+    def forward_stateful(self, conditioning, pedal, z, hidden_state=None):
+        context, next_state = self.base.forward_stateful(
+            conditioning, pedal, z, hidden_state
+        )
+        return self._adapt(context, z), next_state
+
+    def forward(self, conditioning, pedal, z):
+        context, _ = self.forward_stateful(conditioning, pedal, z)
+        return context
+
+
+class ResidualDeepMonophonicNetwork(nn.Module):
+    """Zero-output deep adapter around the fixed 96/64 v1 decoder."""
+
+    def __init__(self, context_dim: int = 32, hidden_dim: int = 64) -> None:
+        super().__init__()
+        self.base = sub_modules.MonophonicNetwork()
+        self.midi_norm = 128.0
+        self.residual = nn.Sequential(
+            nn.Linear(context_dim + 3, hidden_dim),
+            nn.LeakyReLU(0.1),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(0.1),
+            nn.Linear(hidden_dim, 161),
+        )
+        nn.init.zeros_(self.residual[-1].weight)
+        nn.init.zeros_(self.residual[-1].bias)
+
+    @property
+    def gru(self) -> nn.GRU:
+        return self.base.gru
+
+    def _residual(self, conditioning, extended_pitch, context):
+        normalized = torch.cat(
+            [
+                extended_pitch / self.midi_norm,
+                conditioning / conditioning.new_tensor([self.midi_norm, 1.0]),
+                context,
+            ],
+            dim=-1,
+        )
+        return torch.split(self.residual(normalized), [1, 96, 64], dim=-1)
+
+    def forward_stateful(self, conditioning, extended_pitch, context, hidden_state=None):
+        amplitude, harmonics, noise, next_state = self.base.forward_stateful(
+            conditioning, extended_pitch, context, hidden_state
+        )
+        delta_amplitude, delta_harmonics, delta_noise = self._residual(
+            conditioning, extended_pitch, context
+        )
+        return (
+            amplitude + delta_amplitude,
+            harmonics + delta_harmonics,
+            noise + delta_noise,
+            next_state,
+        )
+
+    def forward(self, conditioning, extended_pitch, context):
+        return self.forward_stateful(conditioning, extended_pitch, context)[:-1]
+
+
+class ResidualJointInharmonicity(nn.Module):
+    """Identity-initialized pitch-curve correction around the v1 prior."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.base = sub_modules.InharmonicityNetwork()
+        self.slopes_modifier = nn.Parameter(torch.zeros(2))
+        self.offsets_modifier = nn.Parameter(torch.zeros(2))
+
+    def forward(self, extended_pitch, global_inharm=None):
+        base = self.base(extended_pitch, global_inharm)
+        pitch = extended_pitch / 128.0
+        correction = (
+            self.slopes_modifier * pitch + self.offsets_modifier
+        ).sum(dim=-1, keepdim=True)
+        return base * torch.exp(correction.clamp(-2.0, 2.0))
+
 
 class FiLMContextNetwork(nn.Module):
     """Context encoder with piano-conditioned feature-wise modulation."""

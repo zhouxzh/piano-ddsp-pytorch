@@ -1,9 +1,9 @@
 # 当前网络结构与实时性审查
 
-审查日期：2026-07-21
+审查日期：2026-07-24
 
-版本说明：本文所称“当前模型”从 2026-07-23 起正式记为 **v1**；
-`piano_current_fixed.onnx` 仅作为兼容文件名保留。v2 是独立结构实验，详见
+版本说明：本文所称“当前模型”正式记为 **v1**，文件为 `piano_v1.onnx`；
+v2 文件为 `piano_v2.onnx`，是独立结构实验。旧名称只保留为兼容符号链接，详见
 [模型版本命名与 v2 音质分析](model-versions.md)。
 
 ## 结论
@@ -12,11 +12,13 @@
 |---|---|
 | 网络能否学习 MAESTRO 钢琴音色 | 可以。结构保留了旧版 DDSP-Piano 的复音、非谐性、双琴弦失谐、滤波噪声和多环境混响建模。 |
 | 神经网络能否按实时小块运行 | 可以作为候选。ONNX 每次处理 1 个 250 Hz 控制帧，并显式输入、输出两组 GRU 状态。 |
-| 当前工程能否直接连续输出无爆音音频 | 不可以。导出的 ONNX 只输出控制量，宿主端连续 DSP 和实时 MIDI 引擎尚未实现。 |
-| 是否已经达到 DDSP-VST 类似的完整实时能力 | 尚未。模型边界相似，但缺少音频线程、后台推理、环形缓冲、重采样和状态化 C++ DSP。 |
+| 当前工程能否直接连续输出音频 | 可以进行 ONNX CPU 原型验证。`realtime_midi_server.py` 已实现实时 MIDI、连续 ONNX/DSP 状态和浏览器网络播放。 |
+| 是否已经达到 DDSP-VST 类似的完整实时能力 | 尚未。已有 Python/Web 原型，但仍缺少硬实时音频线程、无锁队列和状态化 C++/Ascend 宿主。 |
 | 是否已经可以部署到 Ascend 310B | 尚不能确认。当前只完成 CPU PyTorch/ONNX Runtime 等价验证，本机没有 CANN、ATC 或 310B 真机验证环境。 |
 
-因此，当前状态应定义为“实时神经控制器原型已成立，端到端实时乐器尚未完成”。
+因此，当前状态应定义为“端到端 ONNX 网络乐器原型已成立，Ascend 310B
+生产实时乐器尚未完成”。原型的使用方法和实测边界见
+[ONNX 实时 MIDI 网络试听](realtime-onnx-midi.md)。
 
 这里的 Ascend 结论只针对当前 16 声部钢琴 ONNX。项目已经实测 DDSP-VST 模型可以直接转换为 OM，在该已测试模型和转换配置范围内不存在模型适配风险；但当前模型增加了第二组 GRU、Embedding/Gather、16 声部状态、钢琴非谐性和不同输出合同，仍需单独验证。三套模型的逐层差异见 [DDSP 网络结构对比](ddsp-network-structure-comparison.md)。
 
@@ -33,7 +35,12 @@
 - 踏板条件：CC64 至 CC67，共 4 维；只有 CC64 在预处理阶段参与延音状态计算，其余控制器作为网络输入。
 - 音色编号：MAESTRO 的 10 个年份映射为 10 个 `piano_model` 索引。它是录音年份/环境代理，不是严格的物理钢琴型号标识。
 
-音符按稳定槽位写入 `[T,16,2]`，延续音符尽量保留原槽位。超过 16 复音的 3 秒片段会被整个排除，见 [`MaestroSegmentDataset`](../ddsp_piano/maestro.py#L356)。这与上游 DDSP-Piano 的训练策略一致，但实时宿主仍需定义超过 16 键时的声部窃取规则。
+音符按稳定槽位写入 `[T,16,2]`，延续音符尽量保留原槽位。超过 16 复音的
+3 秒训练片段会被整个排除，见
+[`MaestroSegmentDataset`](../ddsp_piano/maestro.py#L356)。实时 CPU 参考使用
+[`LiveMidiState`](../ddsp_piano/realtime.py)：优先窃取已松键但由踏板保持的最旧
+声部，否则窃取最旧声部，并在 metrics 中累计 `voice_steals`。后续 C++ 宿主
+必须复现并验证同一规则。
 
 ## 当前网络结构
 
@@ -142,17 +149,30 @@ extended_pitch(1) + conditioning(2) + context(32) = 35
 
 平均值明显低于 4 ms 控制周期，说明神经部分体量合理；但最大值已经超过周期，而且该测试不含 MIDI、NPU 传输、完整 DSP、重采样和音频回调，不能作为硬实时或 Ascend 性能结论。
 
+2026-07-24 使用 `piano_v1.onnx` 和 8 帧/512 采样（32 ms）块进行
+完整 CPU 原型实测：模型加载约 22 ms，静音块合成约 22.5 ms（RTF 0.70），
+单音起音块约 21.4 ms（RTF 0.67），输出 WAV 无削波。该结果包含 ONNX、16
+声部谐波/噪声和 24,000 点分区混响，但不含网络和浏览器设备缓冲；它只证明
+当前服务器能运行默认原型，不能代替压力测试或 310B 验收。
+
 ## 阻止完整实时合成的问题
 
-### P0：宿主端实时音频引擎不存在
+### P0：生产宿主端实时音频引擎不存在
 
-仓库目前没有把 MIDI 回调、16 声部分配、ONNX/CANN 推理、DSP 合成和声卡输出串起来的生产运行时。Python 的 [`extend_pitch_for_release`](../ddsp_piano/deployment.py#L60) 和 [`scale_controls_for_synthesis`](../ddsp_piano/deployment.py#L92) 只是参考实现，不是实时 C++ 音频路径。
+仓库已经用 Python/WebSocket 把 MIDI、16 声部分配、ONNX Runtime、DSP 和
+浏览器声卡串成可试听参考，但这不是生产运行时。它使用 Python 调度、线程池、
+网络 WAV 块和约 80 ms 浏览器启动缓冲，不满足音频 callback 无锁、无分配、
+无网络等待的要求。`extend_pitch_for_release`、`LiveMidiState` 和
+`RealtimeOnnxSynthesizer` 是后续 C++/Ascend 宿主需要对齐的 CPU 参考。
 
-### P0：DSP 没有跨音频块状态
+### 已修复原型项：DSP 跨音频块状态
 
-现有 [`HarmonicOscillator`](../ddsp_piano/ddsp_pytorch/harmonic_oscillator.py#L42) 在每次调用时从零开始 `cumsum` 相位。如果按 64 采样块直接重复调用，相位会在块边界重置并产生咔嗒或频谱泄漏。
-
-现有噪声合成没有保留 FIR overlap；现有 [`Reverb`](../ddsp_piano/ddsp_pytorch/reverb.py#L8) 对整段音频做 FFT 卷积，也没有保留卷积尾音。三者都必须实现宿主端流式状态，不能把离线训练 DSP 逐块调用当成实时实现。
+[`_StreamingDrySynthesizer`](../scripts/render_onnx.py) 已保存每个声部/琴弦/部分音
+的相位、独立 PRNG 和噪声 FIR overlap；
+[`PartitionedConvolver`](../ddsp_piano/realtime.py) 保存混响频域历史和 overlap。
+单元测试覆盖不同块大小的 dry 合成一致性和跨块分区卷积与线性卷积对齐。
+这些修复使 ONNX CPU 原型连续，但后续 C++/Ascend 宿主仍要等价重写、长时
+压力测试并处理音色切换 crossfade，不能在最终产品直接使用 Python 对象。
 
 ### P0：Ascend 310B 兼容性尚未验证
 

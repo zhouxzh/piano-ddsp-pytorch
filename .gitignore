@@ -228,6 +228,7 @@ __marimo__/
 !/runs/.gitkeep
 /exports/
 /evaluations/
+/outputs/
 # Third-party reference checkouts stay local. Keep only their inventory in Git.
 /references/*
 !/references/README.md

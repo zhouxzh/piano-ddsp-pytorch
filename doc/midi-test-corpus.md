@@ -38,6 +38,6 @@
 
 `smoke_piano_controls.onnx` 没有固定单帧输入、显式循环状态和完整部署 JSON，不满足当前实时 ONNX 合同，因此不生成 WAV。总索引会记录该排除原因。
 
-`current-fixed` 从 2026-07-23 起正式命名为 **v1**。为兼容既有导出和部署脚本，模型文件仍为
-`exports/piano_current_fixed.onnx`，但文档、试听目录和比较报告统一使用 `v1`。版本定义和 v2
-当前音质问题见[模型版本命名与 v2 音质分析](model-versions.md)。
+正式模型文件固定为 `exports/piano_v1.onnx` 和 `exports/piano_v2.onnx`，试听目录与报告固定使用
+`v1`/`v2`。旧文件名只作为兼容符号链接。版本定义、宿主混响配置差异和 v2 当前音质问题见
+[模型版本命名与 v2 音质分析](model-versions.md)。
