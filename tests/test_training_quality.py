@@ -15,6 +15,7 @@ from ddsp_piano.training_quality import (
     write_quality_manifest,
 )
 from scripts.run_quality_finetune import objective_gate, reverb_delta_gate
+from scripts.run_v3_quality_cycle import final_gate, screen_gate, severe_regression
 
 
 class TinyQualityDataset:
@@ -118,6 +119,47 @@ class TrainingQualityTest(unittest.TestCase):
         }
         passed, failures = reverb_delta_gate(fake_report(composite=1.0), reverb_thresholds)
         self.assertTrue(passed, failures)
+
+    def test_v3_relative_screen_and_final_gates(self):
+        report = fake_report(
+            candidate={
+                "loudness_error_lu": {"p95": 4.5},
+                "spectral_centroid_error": {"p95": 0.015},
+                "tail_decay_error_db_per_second": {"p95": 7.8},
+            },
+            baseline={
+                "loudness_error_lu": {"p95": 5.0},
+                "spectral_centroid_error": {"p95": 0.017},
+                "tail_decay_error_db_per_second": {"p95": 8.0},
+            },
+            composite=0.99,
+        )
+        screen, failures = screen_gate(
+            report,
+            {
+                "composite_max": 1.0,
+                "mrstft_max": 1.005,
+                "year_max": 1.02,
+                "loudness_p95_ratio_max": 0.95,
+                "centroid_p95_ratio_max": 0.95,
+            },
+        )
+        self.assertTrue(screen, failures)
+        self.assertFalse(
+            severe_regression(report, {"composite_max": 1.02, "year_max": 1.08})
+        )
+        final, failures = final_gate(
+            report,
+            fake_report(composite=0.92),
+            {
+                "base_composite_max": 1.0,
+                "v1_composite_max": 0.9339,
+                "loudness_p95_ratio_max": 0.90,
+                "centroid_p95_ratio_max": 0.90,
+                "tail_p95_ratio_max": 1.05,
+            },
+        )
+        self.assertTrue(final, failures)
 
 
 if __name__ == "__main__":

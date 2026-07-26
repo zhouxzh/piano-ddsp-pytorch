@@ -1,0 +1,50 @@
+{
+  "schema": "ddsp-piano-v3-quality-cycle/v1",
+  "cycle_id": "v3-candidate-20260726",
+  "parent_checkpoint": "runs/quality_cycle/v2-parallel-20260724/candidates/v2a_calibrated_v1/checkpoints/last.pt",
+  "parent_onnx": "exports/candidates/v2-parallel-20260724/v2a_calibrated_v1/step_40000.onnx",
+  "v1_onnx": "exports/piano_v1.onnx",
+  "evaluation_config": "configs/evaluation_v3.json",
+  "maestro_root": "data/maestro-v3.0.0",
+  "cache_dir": "cache/maestro-v3.0.0",
+  "midi_dir": "midi",
+  "run_root": "runs/quality_cycle",
+  "export_root": "exports/candidates",
+  "evaluation_root": "evaluations/quality_cycles",
+  "listening_root": "outputs/listening",
+  "training": {
+    "batch_size": 4,
+    "train_workers": 4,
+    "learning_rate": 0.00003,
+    "grad_clip": 1.0,
+    "velocity_loss_every": 4,
+    "loss_calibration_batches": 512,
+    "log_every": 20,
+    "seed": 20260726
+  },
+  "candidates": [
+    {"id": "v3a_factorized_heads", "conditioning_gate": "none"},
+    {"id": "v3b_velocity_onset_gate", "conditioning_gate": "velocity_onset"}
+  ],
+  "screen_milestones_examples": [1000, 2000, 4000],
+  "full_milestones_examples": [12000, 24000, 40000],
+  "screen_gate": {
+    "composite_max": 1.0,
+    "mrstft_max": 1.005,
+    "year_max": 1.02,
+    "loudness_p95_ratio_max": 0.95,
+    "centroid_p95_ratio_max": 0.95
+  },
+  "early_stop_gate": {
+    "composite_max": 1.02,
+    "year_max": 1.08
+  },
+  "final_gate": {
+    "base_composite_max": 1.0,
+    "v1_composite_max": 0.9339,
+    "loudness_p95_ratio_max": 0.90,
+    "centroid_p95_ratio_max": 0.90,
+    "tail_p95_ratio_max": 1.05
+  },
+  "listening_wet_gains": [0.25, 0.5, 0.75, 1.0]
+}

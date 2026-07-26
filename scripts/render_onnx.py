@@ -802,6 +802,11 @@ def main() -> int:
         help="Bounded-memory synthesis chunk duration (default: 4.0)",
     )
     parser.add_argument(
+        "--reverb-wet-gain",
+        type=float,
+        help="Override the metadata IR wet gain for a host-DSP listening ablation",
+    )
+    parser.add_argument(
         "--decompose",
         action="store_true",
         help="Also write normalized harmonic, noise, and unreverberated stems",
@@ -815,6 +820,11 @@ def main() -> int:
     if not metadata_path.is_file():
         raise FileNotFoundError(f"Deployment metadata not found: {metadata_path}")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if args.reverb_wet_gain is not None:
+        if args.reverb_wet_gain < 0:
+            raise ValueError("--reverb-wet-gain must be non-negative")
+        metadata = dict(metadata)
+        metadata["reverb_wet_gain"] = float(args.reverb_wet_gain)
     sample_rate, frame_rate, max_polyphony, samples_per_frame = _validate_contract(metadata)
     output_label = model_output_label(model_path, metadata)
     reverb_output_name = str(metadata.get("reverb_output", "reverb_ir"))
@@ -855,6 +865,7 @@ def main() -> int:
             "midi_directory": str(midi_dir),
             "piano_model": args.piano_model,
             "maestro_year": piano_models[args.piano_model],
+            "effective_reverb_wet_gain": reverb_wet_gain,
             "files": [],
         }
         for midi_path in midi_paths:

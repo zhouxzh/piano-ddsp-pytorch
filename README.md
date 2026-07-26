@@ -185,6 +185,24 @@ The cycle remains an `objective_candidate` until later human review and never
 overwrites v1 or v2. Exact milestones, gates, recovery rules, and artifact
 paths are documented in [`doc/v2-quality-q1.md`](doc/v2-quality-q1.md).
 
+Q1 finished without a controls candidate passing its automatic gate. The next
+cycle therefore introduces the separately named `v3-candidate` architecture:
+it retains the deployed recurrent-state dimensions and 96/64 control contract,
+but factorizes amplitude, harmonic, and noise heads and optionally adds a
+zero-initialized velocity/onset gate. Run or resume it with:
+
+```bash
+conda run -n torch python scripts/run_v3_quality_cycle.py \
+  --config configs/v3_quality_cycle.json --device cuda
+```
+
+The cycle screens both structural variants at 1k/2k/4k examples and only lets
+the passing winner continue to 12k/24k/40k. Human listening is prepared after
+all automated training and evaluation; it never blocks the unattended cycle.
+The official v1/v2 exports remain unchanged. Architecture, gates, fixed ONNX
+contract, output paths, and wet-gain listening ablations are documented in
+[`doc/v3-quality-cycle.md`](doc/v3-quality-cycle.md).
+
 ## Pipeline Smoke Test
 
 No real data is included, but the optional `scripts/make_smoke_maestro.py`

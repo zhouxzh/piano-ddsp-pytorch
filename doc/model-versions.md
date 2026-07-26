@@ -93,3 +93,15 @@ v2 的平均峰均比也从 v1 的 `18.62 dB` 降至 `17.64 dB`，动态略更�
 `q1_uniform`、`q1_curriculum`、`q1_reverb` 和 `q1_joint`。这些名称表示实验与阶段，不是公开
 版本。自动指标通过后状态写为 `objective_candidate`；只有后续人工盲听通过并完成显式发布动作，
 才允许命名为 v2.1。训练、ONNX、报告和 WAV 产物均放在带周期名的独立目录，不覆盖 v1/v2。
+
+## 2026-07-26 v3 Candidate
+
+Q1 controls 候选全部未通过自动门禁，因此任何 Q1 checkpoint 都不作为新父模型。新的结构周期
+从原 40k `v2a_calibrated_v1` 重新初始化，统一命名为 `v3-candidate-20260726`。内部候选只有
+`v3a_factorized_heads` 和 `v3b_velocity_onset_gate`；二者将共享 monophonic 输出层拆成独立的
+amplitude、harmonic、noise heads，后者额外增加零初始化力度/起音门控。
+
+checkpoint 的内部 `model_variant=v3` 导出时显示 `release_version=v3-candidate`。它不表示正式
+v3，也不表示音质高于 v1。自动 release 门禁和后续人工盲听均通过后，才能把选中权重作为正式
+v3 发布；在此之前前端和默认实时服务不得用它替换 v1。详细周期见
+`doc/v3-quality-cycle.md`。

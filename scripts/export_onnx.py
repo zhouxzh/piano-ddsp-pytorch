@@ -18,7 +18,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from ddsp_piano.default_model import get_model, get_v2_model
+from ddsp_piano.default_model import get_model, get_v2_model, get_v3_model
 from ddsp_piano.deployment import PianoRealtimeControlModel
 from ddsp_piano.versioning import release_version_for_variant
 
@@ -116,7 +116,9 @@ def main() -> int:
     parser.add_argument("--atol", type=float, default=1e-4)
     parser.add_argument("--rtol", type=float, default=1e-4)
     parser.add_argument("--verify-steps", type=int, default=4)
-    parser.add_argument("--model-variant", choices=("auto", "current", "v2"), default="auto")
+    parser.add_argument(
+        "--model-variant", choices=("auto", "current", "v2", "v3"), default="auto"
+    )
     args = parser.parse_args()
 
     if args.frames <= 0:
@@ -149,12 +151,18 @@ def main() -> int:
     context_type = str(checkpoint_args.get("context_type", "film"))
     monophonic_type = str(checkpoint_args.get("monophonic_type", "deep"))
     inharmonicity_type = str(checkpoint_args.get("inharmonicity_type", "joint"))
-    if model_variant != "v2":
+    decoder_type = str(checkpoint_args.get("decoder_type", "factorized"))
+    conditioning_gate = str(checkpoint_args.get("conditioning_gate", "none"))
+    if model_variant == "current":
         context_type = "legacy"
         monophonic_type = "legacy"
         inharmonicity_type = "legacy"
     reverb_wet_gain_arg = float(checkpoint_args.get("reverb_wet_gain", 0.25))
-    model_builder = get_v2_model if model_variant == "v2" else get_model
+    model_builder = {
+        "current": get_model,
+        "v2": get_v2_model,
+        "v3": get_v3_model,
+    }[model_variant]
     output_names = V2_OUTPUT_NAMES if reverb_type == "fdn" else CURRENT_OUTPUT_NAMES
     model_kwargs = dict(
         inference=True,
@@ -173,6 +181,14 @@ def main() -> int:
             context_type=context_type,
             monophonic_type=monophonic_type,
             inharmonicity_type=inharmonicity_type,
+        )
+    elif model_variant == "v3":
+        model_kwargs.update(
+            n_harmonics=n_harmonics,
+            n_noise_filter_banks=n_noise_bands,
+            reverb_type=reverb_type,
+            decoder_type=decoder_type,
+            conditioning_gate=conditioning_gate,
         )
     model = model_builder(**model_kwargs)
     model.load_state_dict(checkpoint["model"])
@@ -269,6 +285,8 @@ def main() -> int:
             "context_type": context_type,
             "monophonic_type": monophonic_type,
             "inharmonicity_type": inharmonicity_type,
+            "decoder_type": decoder_type if model_variant == "v3" else None,
+            "conditioning_gate": conditioning_gate if model_variant == "v3" else None,
             "loss_version": str(checkpoint_args.get("loss_version", "legacy")),
             "energy_loss_weight": float(checkpoint_args.get("energy_loss_weight", 0.0)),
             "onset_loss_weight": float(checkpoint_args.get("onset_loss_weight", 0.0)),
@@ -277,6 +295,12 @@ def main() -> int:
             ),
             "loss_calibration": checkpoint.get("loss_calibration"),
             "initialization": checkpoint.get("initialization"),
+            "control_anchor_checkpoint": checkpoint_args.get(
+                "control_anchor_checkpoint"
+            ),
+            "control_anchor_weight": float(
+                checkpoint_args.get("control_anchor_weight", 0.0)
+            ),
             "validation_corpus_sha256": checkpoint.get("validation_corpus_sha256"),
         },
         "n_harmonics": output_contract["harmonic_distribution"][-1],

@@ -11,6 +11,7 @@ class VersioningTest(unittest.TestCase):
     def test_release_versions_hide_internal_current_name(self) -> None:
         self.assertEqual(release_version_for_variant("current"), "v1")
         self.assertEqual(release_version_for_variant("v2"), "v2")
+        self.assertEqual(release_version_for_variant("v3"), "v3-candidate")
 
     def test_metadata_release_version_takes_precedence(self) -> None:
         path = Path("exports/legacy-name.onnx")
@@ -20,7 +21,7 @@ class VersioningTest(unittest.TestCase):
 
     def test_unknown_internal_variant_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unknown model variant"):
-            release_version_for_variant("v3")
+            release_version_for_variant("v4")
 
 
 if __name__ == "__main__":

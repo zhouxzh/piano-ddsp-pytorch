@@ -202,6 +202,84 @@ class MonophonicDeepNetwork(nn.Module):
         return self.forward_stateful(conditioning, extended_pitch, context)[:-1]
 
 
+class FactorizedMonophonicNetwork(nn.Module):
+    """v1-compatible recurrent decoder with independent synthesis heads.
+
+    The recurrent trunk intentionally retains the v1 dimensions and parameter
+    names. This lets a trained v2A decoder be migrated without changing its
+    step-zero output, while preventing amplitude, harmonic, and noise updates
+    from competing in one output projection during subsequent training.
+    """
+
+    def __init__(
+        self,
+        context_dim: int = 32,
+        hidden_dim: int = 192,
+        n_harmonics: int = 96,
+        n_noise_bands: int = 64,
+        conditioning_gate: str = "none",
+    ) -> None:
+        super().__init__()
+        if conditioning_gate not in {"none", "velocity_onset"}:
+            raise ValueError("conditioning_gate must be 'none' or 'velocity_onset'")
+        self.linear_1 = nn.Linear(context_dim + 3, 128)
+        self.leaky_relu_1 = nn.LeakyReLU(0.1)
+        self.gru = nn.GRU(128, hidden_dim, 1, batch_first=True)
+        self.linear_2 = nn.Linear(hidden_dim, hidden_dim)
+        self.leaky_relu_2 = nn.LeakyReLU(0.1)
+        self.layer_norm = nn.LayerNorm(hidden_dim)
+        self.amplitude_head = nn.Linear(hidden_dim, 1)
+        self.harmonic_head = nn.Linear(hidden_dim, n_harmonics)
+        self.noise_head = nn.Linear(hidden_dim, n_noise_bands)
+        self.conditioning_gate = conditioning_gate
+        self.midi_norm = 128.0
+        self.n_harmonics = n_harmonics
+        self.n_noise_bands = n_noise_bands
+        if conditioning_gate == "velocity_onset":
+            self.gate = nn.Sequential(
+                nn.Linear(context_dim + 2, 32),
+                nn.LeakyReLU(0.1),
+                nn.Linear(32, 3),
+                nn.Tanh(),
+            )
+            nn.init.zeros_(self.gate[-2].weight)
+            nn.init.zeros_(self.gate[-2].bias)
+        else:
+            self.gate = None
+
+    def _normalized_inputs(self, conditioning, extended_pitch, context):
+        normalized_conditioning = conditioning / conditioning.new_tensor(
+            [self.midi_norm, 1.0]
+        )
+        recurrent_input = torch.cat(
+            [extended_pitch / self.midi_norm, normalized_conditioning, context],
+            dim=-1,
+        )
+        return normalized_conditioning, recurrent_input
+
+    def forward_stateful(self, conditioning, extended_pitch, context, hidden_state=None):
+        normalized_conditioning, recurrent_input = self._normalized_inputs(
+            conditioning, extended_pitch, context
+        )
+        latent = self.leaky_relu_1(self.linear_1(recurrent_input))
+        latent, next_state = self.gru(latent, hidden_state)
+        latent = self.layer_norm(self.leaky_relu_2(self.linear_2(latent)))
+        amplitude = self.amplitude_head(latent)
+        harmonics = self.harmonic_head(latent)
+        noise = self.noise_head(latent)
+        if self.gate is not None:
+            amplitude_gate, harmonic_gate, noise_gate = self.gate(
+                torch.cat([normalized_conditioning, context], dim=-1)
+            ).split(1, dim=-1)
+            amplitude = amplitude + amplitude_gate
+            harmonics = harmonics + harmonic_gate
+            noise = noise + noise_gate
+        return amplitude, harmonics, noise, next_state
+
+    def forward(self, conditioning, extended_pitch, context):
+        return self.forward_stateful(conditioning, extended_pitch, context)[:-1]
+
+
 class JointParametricInharmTuning(nn.Module):
     """Joint bass/treble inharmonicity curve used by the v2 model."""
 
