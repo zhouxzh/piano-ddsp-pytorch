@@ -8,7 +8,7 @@ import torch
 import tempfile
 from pathlib import Path
 
-from ddsp_piano.default_model import get_model, get_v2_model, get_v3_model
+from ddsp_piano.default_model import get_model, get_v2_model
 from train import load_partial_initialization
 from ddsp_piano.ddsp_pytorch.fdn import fdn_impulse_response
 from ddsp_piano.ddsp_pytorch.reverb import Reverb
@@ -259,72 +259,6 @@ class DeploymentTest(unittest.TestCase):
             v2a_outputs = PianoRealtimeControlModel(v2a)(*inputs)
         for expected, actual in zip(v1_outputs, v2a_outputs):
             torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0)
-
-    def test_v3_factorized_heads_preserve_parent_outputs_at_initialization(self) -> None:
-        kwargs = {
-            "n_synths": 16,
-            "n_piano_models": 1,
-            "duration": 1 / 250,
-            "frame_rate": 250,
-            "sample_rate": 16_000,
-            "reverb_wet_gain": 1.0,
-        }
-        torch.manual_seed(11)
-        parent = get_model(**kwargs).eval()
-        inputs = (
-            torch.zeros(1, 1, 16, 2),
-            torch.zeros(1, 1, 4),
-            torch.zeros(1, dtype=torch.int32),
-            torch.zeros(1, 1, 16, 1),
-            torch.zeros(1, 1, 64),
-            torch.zeros(1, 16, 192),
-        )
-        inputs[0][0, 0, 0] = torch.tensor([60.0, 0.8])
-        inputs[3][0, 0, 0, 0] = 60.0
-        with tempfile.TemporaryDirectory() as temporary:
-            checkpoint = Path(temporary) / "parent.pt"
-            torch.save({"model": parent.state_dict()}, checkpoint)
-            for gate in ("none", "velocity_onset"):
-                candidate = get_v3_model(**kwargs, conditioning_gate=gate).eval()
-                report = load_partial_initialization(
-                    candidate, checkpoint, torch.device("cpu")
-                )
-                self.assertIn(
-                    "monophonic_network.amplitude_head.weight", report["mapping"]
-                )
-                with torch.inference_mode():
-                    expected = PianoRealtimeControlModel(parent)(*inputs)
-                    actual = PianoRealtimeControlModel(candidate)(*inputs)
-                for parent_value, candidate_value in zip(expected, actual):
-                    torch.testing.assert_close(
-                        candidate_value, parent_value, rtol=1e-6, atol=1e-6
-                    )
-
-    def test_v3_realtime_contract_keeps_fixed_state_and_control_shapes(self) -> None:
-        model = get_v3_model(
-            n_synths=16,
-            n_piano_models=1,
-            duration=1 / 250,
-            frame_rate=250,
-            sample_rate=16_000,
-            conditioning_gate="velocity_onset",
-        ).eval()
-        wrapper = PianoRealtimeControlModel(model).eval()
-        inputs = (
-            torch.zeros(1, 1, 16, 2),
-            torch.zeros(1, 1, 4),
-            torch.zeros(1, dtype=torch.int32),
-            torch.zeros(1, 1, 16, 1),
-            torch.zeros(1, 1, 64),
-            torch.zeros(1, 16, 192),
-        )
-        with torch.inference_mode():
-            outputs = wrapper(*inputs)
-        self.assertEqual(tuple(outputs[0].shape), (1, 1, 16, 1))
-        self.assertEqual(tuple(outputs[1].shape), (1, 1, 16, 96))
-        self.assertEqual(tuple(outputs[4].shape), (1, 1, 16, 64))
-        self.assertEqual(tuple(outputs[-2].shape), (1, 1, 64))
-        self.assertEqual(tuple(outputs[-1].shape), (1, 16, 192))
 
     def test_fdn_controls_are_bounded_and_renderable(self) -> None:
         controls = torch.zeros(1, 9)

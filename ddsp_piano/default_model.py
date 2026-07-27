@@ -6,7 +6,6 @@ from ddsp_piano.ddsp_pytorch.noise import Noise
 from ddsp_piano.ddsp_pytorch.reverb import Reverb
 from ddsp_piano.ddsp_pytorch.fdn import FDNReverb
 from ddsp_piano.modules.v2_sub_modules import (
-    FactorizedMonophonicNetwork,
     FiLMContextNetwork,
     JointParametricInharmTuning,
     MonophonicDeepNetwork,
@@ -211,73 +210,5 @@ def get_v2_model(
         "context_type": context_type,
         "monophonic_type": monophonic_type,
         "inharmonicity_type": inharmonicity_type,
-    }
-    return model
-
-
-def get_v3_model(
-    inference=False,
-    duration=3,
-    n_synths=16,
-    n_piano_models=10,
-    piano_embedding_dim=16,
-    n_harmonics=96,
-    n_noise_filter_banks=64,
-    frame_rate=250,
-    sample_rate=16000,
-    reverb_duration=1.5,
-    reverb_type="ir",
-    reverb_wet_gain=1.0,
-    decoder_type="factorized",
-    conditioning_gate="none",
-    synthesis_layout="serial",
-):
-    """Build the deployment-conservative v3 candidate control model."""
-    if n_harmonics != 96 or n_noise_filter_banks != 64:
-        raise ValueError("v3 candidates require 96 harmonics and 64 noise bands")
-    if reverb_type != "ir":
-        raise ValueError("v3 candidates currently require host-side IR reverb")
-    if decoder_type != "factorized":
-        raise ValueError("v3 decoder_type must be 'factorized'")
-    if conditioning_gate not in {"none", "velocity_onset"}:
-        raise ValueError("invalid v3 conditioning_gate")
-
-    model = PianoModel(
-        n_synths=n_synths,
-        z_encoder=sub_modules.OneHotZEncoder(
-            n_instruments=n_piano_models,
-            z_dim=piano_embedding_dim,
-            n_frames=int(duration * frame_rate),
-        ),
-        note_release=sub_modules.NoteRelease(frame_rate=frame_rate),
-        context_network=sub_modules.ContextNetwork(),
-        parallelizer=sub_modules.Parallelizer(n_synths=n_synths),
-        monophonic_network=FactorizedMonophonicNetwork(
-            n_harmonics=n_harmonics,
-            n_noise_bands=n_noise_filter_banks,
-            conditioning_gate=conditioning_gate,
-        ),
-        inharm_model=sub_modules.InharmonicityNetwork(),
-        detuner=sub_modules.Detuner(n_substrings=2),
-        reverb_model=sub_modules.MultiInstrumentReverb(
-            n_instruments=n_piano_models,
-            reverb_length=int(reverb_duration * sample_rate),
-            inference=inference,
-            apply_decay=True,
-        ),
-        harmonic_synthesizer=MultiInharmonic(
-            int(duration * sample_rate),
-            sample_rate,
-            inference=inference,
-            n_harmonics=n_harmonics,
-        ),
-        noise_synthesizer=Noise(),
-        reverb_module=Reverb(wet_gain=reverb_wet_gain),
-        synthesis_layout=synthesis_layout,
-    )
-    model.reverb_type = reverb_type
-    model.architecture = {
-        "decoder_type": decoder_type,
-        "conditioning_gate": conditioning_gate,
     }
     return model

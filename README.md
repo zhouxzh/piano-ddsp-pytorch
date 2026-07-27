@@ -170,38 +170,23 @@ RNG/shuffle resume state. Reproduce the GPU benchmark with
 Measured throughput, memory, pilot quality, and enablement rules are recorded in
 [`doc/training-performance-optimization.md`](doc/training-performance-optimization.md).
 
-The next quality-focused cycle starts from the completed 40k v2A checkpoint and
-trains controls, IR reverb, and a low-learning-rate joint polish as separate,
-rollback-capable stages. It adds train-only calibrated velocity-response,
+The completed Q1 quality cycle started from the 40k v2A checkpoint and tested
+controls, IR reverb, and a low-learning-rate joint polish as separate,
+rollback-capable stages. It added train-only calibrated velocity-response,
 robust loudness, spectral-centroid, release-tail, and curriculum-sampling
-objectives without changing the exported neural graph:
+objectives without changing the exported neural graph. Reproduce that historical
+cycle with:
 
 ```bash
 conda run -n torch python scripts/run_quality_finetune.py \
   --config configs/v2_quality_q1.json --device cuda
 ```
 
-The cycle remains an `objective_candidate` until later human review and never
-overwrites v1 or v2. Exact milestones, gates, recovery rules, and artifact
-paths are documented in [`doc/v2-quality-q1.md`](doc/v2-quality-q1.md).
-
-Q1 finished without a controls candidate passing its automatic gate. The next
-cycle therefore introduces the separately named `v3-candidate` architecture:
-it retains the deployed recurrent-state dimensions and 96/64 control contract,
-but factorizes amplitude, harmonic, and noise heads and optionally adds a
-zero-initialized velocity/onset gate. Run or resume it with:
-
-```bash
-conda run -n torch python scripts/run_v3_quality_cycle.py \
-  --config configs/v3_quality_cycle.json --device cuda
-```
-
-The cycle screens both structural variants at 1k/2k/4k examples and only lets
-the passing winner continue to 12k/24k/40k. Human listening is prepared after
-all automated training and evaluation; it never blocks the unattended cycle.
-The official v1/v2 exports remain unchanged. Architecture, gates, fixed ONNX
-contract, output paths, and wet-gain listening ablations are documented in
-[`doc/v3-quality-cycle.md`](doc/v3-quality-cycle.md).
+No Q1 candidate passed the automatic promotion gate. The configuration remains
+for reproducibility, but there is no active follow-up training cycle and v1
+remains the listening-quality baseline. Exact milestones, gates, recovery rules,
+and artifact paths are documented in
+[`doc/v2-quality-q1.md`](doc/v2-quality-q1.md).
 
 ## Pipeline Smoke Test
 

@@ -13,11 +13,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, Subset
 
-from ddsp_piano.ddsp_pytorch.core import scale_function
-from ddsp_piano.default_model import get_model, get_v2_model, get_v3_model
+from ddsp_piano.default_model import get_model, get_v2_model
 from ddsp_piano.evaluation import build_corpus
 from ddsp_piano.maestro import MaestroSegmentDataset, PreprocessConfig, prepare_split
 from ddsp_piano.modules.loss import HybridLoss
@@ -35,9 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--maestro-root", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path, default=Path("cache"))
     parser.add_argument("--experiment-dir", type=Path, default=Path("runs/piano_16k"))
-    parser.add_argument(
-        "--model-variant", choices=("current", "v2", "v3"), default="current"
-    )
+    parser.add_argument("--model-variant", choices=("current", "v2"), default="current")
     parser.add_argument("--prepare", action="store_true", help="Build missing track caches before training")
     parser.add_argument("--prepare-only", action="store_true", help="Build caches then exit")
     parser.add_argument("--prepare-splits", default="train,validation")
@@ -124,12 +120,6 @@ def parse_args() -> argparse.Namespace:
         choices=("legacy", "residual_joint", "joint"),
         default="joint",
     )
-    parser.add_argument("--decoder-type", choices=("factorized",), default="factorized")
-    parser.add_argument(
-        "--conditioning-gate",
-        choices=("none", "velocity_onset"),
-        default="none",
-    )
     parser.add_argument("--freeze-reverb", action="store_true")
     parser.add_argument("--adapter-only", action="store_true")
     parser.add_argument(
@@ -149,9 +139,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--velocity-loss-every", type=int, default=4)
     parser.add_argument("--velocity-response-ms", type=float, default=125.0)
     parser.add_argument("--loss-calibration-batches", type=int, default=0)
-    parser.add_argument("--loss-calibration-max-scale", type=float, default=100.0)
-    parser.add_argument("--control-anchor-checkpoint", type=Path)
-    parser.add_argument("--control-anchor-weight", type=float, default=0.0)
     parser.add_argument(
         "--sampling-mode", choices=("uniform", "curriculum"), default="uniform"
     )
@@ -330,27 +317,6 @@ def load_partial_initialization(
             continue
         target[destination] = value
         loaded[destination] = source_name
-
-    dense_weight_name = "monophonic_network.dense_out.weight"
-    dense_bias_name = "monophonic_network.dense_out.bias"
-    factorized_heads = (
-        ("amplitude_head", 0, 1),
-        ("harmonic_head", 1, 97),
-        ("noise_head", 97, 161),
-    )
-    if dense_weight_name in source and dense_bias_name in source:
-        for head, start, end in factorized_heads:
-            weight_name = f"monophonic_network.{head}.weight"
-            bias_name = f"monophonic_network.{head}.bias"
-            if weight_name not in target or bias_name not in target:
-                continue
-            weight = source[dense_weight_name][start:end]
-            bias = source[dense_bias_name][start:end]
-            if target[weight_name].shape == weight.shape and target[bias_name].shape == bias.shape:
-                target[weight_name] = weight
-                target[bias_name] = bias
-                loaded[weight_name] = f"{dense_weight_name}[{start}:{end}]"
-                loaded[bias_name] = f"{dense_bias_name}[{start}:{end}]"
     model.load_state_dict(target)
     digest = hashlib.sha256()
     with checkpoint_path.open("rb") as handle:
@@ -519,7 +485,6 @@ def calibrate_perceptual_loss(
     combined_velocity: bool = False,
     response_slopes: torch.Tensor | None = None,
     response_frames: int = 31,
-    maximum_scale: float = 100.0,
 ) -> dict:
     if max_batches <= 0:
         return {"batches": 0, "component_scales": dict(loss_fn.component_scales)}
@@ -583,99 +548,13 @@ def calibrate_perceptual_loss(
         float(np.median(positive_velocity)) if positive_velocity else 0.01
     )
     for name in ("wet", "energy", "onset", "centroid", "tail"):
-        loss_fn.component_scales[name] = min(
-            maximum_scale, max(0.1, 1.0 / max(medians[name], 1e-3))
-        )
+        loss_fn.component_scales[name] = min(100.0, max(0.1, 1.0 / max(medians[name], 1e-3)))
     return {
         "batches": min(max_batches, len(loader)),
         "raw_medians": medians,
         "component_scales": dict(loss_fn.component_scales),
-        "velocity_scale": min(maximum_scale, 1.0 / max(velocity_reference, 0.01)),
-        "maximum_scale": maximum_scale,
+        "velocity_scale": min(100.0, 1.0 / max(velocity_reference, 0.01)),
     }
-
-
-def build_control_anchor(
-    checkpoint_path: Path,
-    device: torch.device,
-    duration: float,
-    synthesis_layout: str,
-) -> torch.nn.Module:
-    """Load a frozen control-only teacher from a v1/v2/v3 checkpoint."""
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    checkpoint_args = checkpoint.get("args", {})
-    variant = str(checkpoint_args.get("model_variant", "current"))
-    piano_models = checkpoint.get("piano_models")
-    if not piano_models:
-        raise ValueError("Control anchor checkpoint does not contain piano_models")
-    common = dict(
-        n_synths=int(checkpoint_args.get("max_polyphony", 16)),
-        n_piano_models=len(piano_models),
-        sample_rate=int(checkpoint_args.get("sample_rate", 16_000)),
-        frame_rate=int(checkpoint_args.get("frame_rate", 250)),
-        duration=duration,
-        reverb_wet_gain=float(checkpoint_args.get("reverb_wet_gain", 1.0)),
-        synthesis_layout=synthesis_layout,
-    )
-    if variant == "v2":
-        teacher = get_v2_model(
-            **common,
-            n_harmonics=int(checkpoint_args.get("n_harmonics", 96)),
-            n_noise_filter_banks=int(checkpoint_args.get("n_noise_bands", 64)),
-            reverb_type=str(checkpoint_args.get("reverb_type", "ir")),
-            context_type=str(checkpoint_args.get("context_type", "legacy")),
-            monophonic_type=str(checkpoint_args.get("monophonic_type", "legacy")),
-            inharmonicity_type=str(
-                checkpoint_args.get("inharmonicity_type", "legacy")
-            ),
-        )
-    elif variant == "v3":
-        teacher = get_v3_model(
-            **common,
-            n_harmonics=int(checkpoint_args.get("n_harmonics", 96)),
-            n_noise_filter_banks=int(checkpoint_args.get("n_noise_bands", 64)),
-            reverb_type=str(checkpoint_args.get("reverb_type", "ir")),
-            decoder_type=str(checkpoint_args.get("decoder_type", "factorized")),
-            conditioning_gate=str(checkpoint_args.get("conditioning_gate", "none")),
-        )
-    else:
-        teacher = get_model(**common)
-    teacher.load_state_dict(checkpoint["model"], strict=True)
-    teacher.eval()
-    for parameter in teacher.parameters():
-        parameter.requires_grad = False
-    return teacher.to(device)
-
-
-def control_anchor_loss(
-    model: torch.nn.Module,
-    teacher: torch.nn.Module,
-    conditioning: torch.Tensor,
-    pedal: torch.Tensor,
-    piano_model: torch.Tensor,
-) -> torch.Tensor:
-    """Keep postprocessed synthesis controls close to a frozen parent."""
-    student = model.predict_controls(conditioning, pedal, piano_model)
-    with torch.no_grad():
-        reference = teacher.predict_controls(conditioning, pedal, piano_model)
-
-    student_amplitude = torch.log(scale_function(student[0]).clamp_min(1e-7))
-    teacher_amplitude = torch.log(scale_function(reference[0]).clamp_min(1e-7))
-    student_harmonics = scale_function(student[1])
-    teacher_harmonics = scale_function(reference[1])
-    student_harmonics = student_harmonics / student_harmonics.sum(
-        dim=-1, keepdim=True
-    ).clamp_min(1e-7)
-    teacher_harmonics = teacher_harmonics / teacher_harmonics.sum(
-        dim=-1, keepdim=True
-    ).clamp_min(1e-7)
-    student_noise = torch.log(scale_function(student[4]).clamp_min(1e-7))
-    teacher_noise = torch.log(scale_function(reference[4]).clamp_min(1e-7))
-    return (
-        F.smooth_l1_loss(student_amplitude, teacher_amplitude)
-        + F.smooth_l1_loss(student_harmonics, teacher_harmonics)
-        + F.smooth_l1_loss(student_noise, teacher_noise)
-    ) / 3.0
 
 
 def run_validation(
@@ -691,8 +570,6 @@ def run_validation(
     combined_velocity: bool = False,
     response_slopes: torch.Tensor | None = None,
     response_frames: int = 31,
-    control_anchor: torch.nn.Module | None = None,
-    control_anchor_weight: float = 0.0,
 ) -> float:
     model.eval()
     loss_sum = torch.zeros((), device=device)
@@ -725,10 +602,6 @@ def run_validation(
                         response_frames=response_frames,
                     )
                     loss = loss + velocity_weight * velocity_scale * velocity_loss
-                if control_anchor is not None and control_anchor_weight:
-                    loss = loss + control_anchor_weight * control_anchor_loss(
-                        model, control_anchor, conditioning, pedal, piano_model
-                    )
             loss_sum = loss_sum + loss.detach()
             batch_count += 1
     if not batch_count:
@@ -819,15 +692,6 @@ def main() -> int:
         raise ValueError("--velocity-loss-every must be positive")
     if args.loss_calibration_batches < 0:
         raise ValueError("--loss-calibration-batches must be non-negative")
-    if args.loss_calibration_max_scale < 0.1:
-        raise ValueError("--loss-calibration-max-scale must be at least 0.1")
-    if args.control_anchor_weight < 0:
-        raise ValueError("--control-anchor-weight must be non-negative")
-    if bool(args.control_anchor_checkpoint) != bool(args.control_anchor_weight):
-        raise ValueError(
-            "--control-anchor-checkpoint and a positive --control-anchor-weight "
-            "must be provided together"
-        )
     if not 0.0 <= args.energy_hard_fraction <= 1.0:
         raise ValueError("--energy-hard-fraction must be in [0, 1]")
     if args.velocity_response_ms <= 0:
@@ -859,14 +723,6 @@ def main() -> int:
     ):
         raise ValueError(
             "The v1/current architecture requires 96 harmonics, 64 noise bands, and IR reverb"
-        )
-    if args.model_variant == "v3" and (
-        args.n_harmonics != 96
-        or args.n_noise_bands != 64
-        or args.reverb_type != "ir"
-    ):
-        raise ValueError(
-            "The v3 candidate architecture requires 96 harmonics, 64 noise bands, and IR reverb"
         )
     config = config_from_args(args)
     device = select_device(args.device)
@@ -953,11 +809,7 @@ def main() -> int:
         shuffle=False,
         worker_count=args.validation_workers,
     )
-    model_builder = {
-        "current": get_model,
-        "v2": get_v2_model,
-        "v3": get_v3_model,
-    }[args.model_variant]
+    model_builder = get_v2_model if args.model_variant == "v2" else get_model
     model_kwargs = dict(
         n_synths=config.max_polyphony,
         n_piano_models=len(train_dataset.piano_models),
@@ -975,14 +827,6 @@ def main() -> int:
             context_type=args.context_type,
             monophonic_type=args.monophonic_type,
             inharmonicity_type=args.inharmonicity_type,
-        )
-    elif args.model_variant == "v3":
-        model_kwargs.update(
-            n_harmonics=args.n_harmonics,
-            n_noise_filter_banks=args.n_noise_bands,
-            reverb_type=args.reverb_type,
-            decoder_type=args.decoder_type,
-            conditioning_gate=args.conditioning_gate,
         )
     model = model_builder(**model_kwargs).to(device)
     model.alternate_training(first_phase=args.phase == 1)
@@ -1012,14 +856,6 @@ def main() -> int:
     ).to(device)
     amp_enabled = bool(args.amp and device.type == "cuda")
     scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
-    control_anchor = None
-    if args.control_anchor_checkpoint is not None:
-        control_anchor = build_control_anchor(
-            args.control_anchor_checkpoint,
-            device,
-            config.segment_seconds,
-            args.synthesis_layout,
-        )
 
     start_epoch = 0
     global_step = 0
@@ -1099,7 +935,6 @@ def main() -> int:
             args.velocity_counterfactual_layout == "combined",
             response_slopes,
             max(1, int(round(config.frame_rate * args.velocity_response_ms / 1000.0))),
-            args.loss_calibration_max_scale,
         )
         loss_calibration["corpus_sha256"] = calibration_sha256
         loss_calibration["quality_manifest"] = (
@@ -1172,7 +1007,6 @@ def main() -> int:
                     conditioning=conditioning,
                 )
                 velocity_loss = signal.new_zeros(())
-                anchor_loss = signal.new_zeros(())
                 if (
                     args.velocity_loss_weight
                     and global_step % args.velocity_loss_every == 0
@@ -1200,11 +1034,6 @@ def main() -> int:
                         * float(loss_calibration.get("velocity_scale", 1.0))
                         * velocity_loss
                     )
-                if control_anchor is not None:
-                    anchor_loss = control_anchor_loss(
-                        model, control_anchor, conditioning, pedal, piano_model
-                    )
-                    loss = loss + args.control_anchor_weight * anchor_loss
             scaler.scale(loss).backward()
             if args.grad_clip > 0:
                 scaler.unscale_(optimizer)
@@ -1229,7 +1058,6 @@ def main() -> int:
                         centroid_loss,
                         tail_loss,
                         velocity_loss,
-                        anchor_loss,
                     )
                 ).detach().float().cpu().tolist()
                 print(
@@ -1238,7 +1066,7 @@ def main() -> int:
                     f"dry={logged[2]:.5f} reverb={logged[3]:.5f} "
                     f"energy={logged[4]:.5f} onset={logged[5]:.5f}",
                     f"centroid={logged[6]:.5f} tail={logged[7]:.5f} "
-                    f"velocity={logged[8]:.5f} anchor={logged[9]:.5f}",
+                    f"velocity={logged[8]:.5f}",
                     flush=True,
                 )
 
@@ -1286,8 +1114,6 @@ def main() -> int:
                 args.velocity_counterfactual_layout == "combined",
                 response_slopes,
                 max(1, int(round(config.frame_rate * args.velocity_response_ms / 1000.0))),
-                control_anchor,
-                args.control_anchor_weight,
             )
             validation_seconds = time.perf_counter() - validation_started
         metrics = {
