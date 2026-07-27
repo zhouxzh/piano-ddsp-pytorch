@@ -10,3 +10,8 @@ THIRD_PARTY_NOTICES.md.
 Redistributions must preserve the applicable license text, copyright notices,
 and modification notices. The trained model release records its upstream
 architecture lineage but contains locally trained weights.
+
+Published checkpoints, ONNX graphs, model parameters, and later OM derivatives
+are separately licensed under CC BY-NC-SA 4.0 for non-commercial use. See
+LICENSES/CC-BY-NC-SA-4.0.txt. This model-artifact license does not replace the
+source-code licenses above.

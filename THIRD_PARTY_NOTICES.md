@@ -14,3 +14,9 @@ DDSP concepts and host processing follow Google Magenta DDSP. No TensorFlow
 checkpoint or third-party training dataset is redistributed in this source
 repository. MAESTRO and local MuseScore MIDI files must be obtained separately
 under their respective terms.
+
+The published model weights were trained on MAESTRO v3.0.0, made available by
+Google LLC under CC BY-NC-SA 4.0. Published checkpoints, ONNX graphs, parameters,
+and later OM derivatives are consequently offered under CC BY-NC-SA 4.0 for
+non-commercial use. The model release does not redistribute MAESTRO recordings
+or MIDI files.

@@ -2,7 +2,8 @@
 
 [English](README.md)
 
-本仓库用于训练、导出和测试实时 MIDI 钢琴合成所需的 ONNX 神经控制模型。首个正式发布为
+本仓库用于训练、导出和测试专门面向 Ascend 310B 实时 MIDI 钢琴合成的 ONNX 神经控制模型。
+PyTorch CPU 和 ONNX Runtime 只是数值参考路径，不是额外的部署目标。首个正式发布为
 `model-suite-v1.0.0`，同时保留四个结构差异明显的模型：
 
 | 模型 ID | 结构 | 谐波/噪声 | 宿主混响 |
@@ -26,10 +27,13 @@ pip install -r requirements.txt
 python -m unittest discover -v
 ```
 
-从 GitHub Release `model-suite-v1.0.0` 下载附件到
-`artifacts/model-suite-v1.0.0/`，然后检查：
+从 Hugging Face 模型仓库 `zhouxzh/piano-ddsp-ascend310` 下载
+`model-suite-v1.0.0` 版本，然后检查：
 
 ```bash
+HF_ENDPOINT=https://huggingface.co hf download zhouxzh/piano-ddsp-ascend310 \
+  --revision model-suite-v1.0.0 \
+  --local-dir artifacts/model-suite-v1.0.0
 cd artifacts/model-suite-v1.0.0
 sha256sum -c SHA256SUMS
 ```
@@ -86,8 +90,12 @@ python scripts/export_onnx.py \
 ## 文档
 
 - [模型与发布附件](docs/models.md)
+- [GitHub 与 Hugging Face 发布流程](docs/publishing.md)
 - [训练与 ONNX 导出](docs/training-and-export.md)
 - [标准评测与本地 MIDI 测试集](docs/evaluation.md)
 - [实时网页播放器](docs/realtime.md)
 - [Ascend 310B 交接合同](docs/ascend-310b.md)
 - [上游来源与许可证](docs/provenance.md)
+
+本仓库新增代码使用 MIT，改编的 DDSP-Piano 代码保留 Apache-2.0。发布的 checkpoint、ONNX、
+模型参数和后续 OM 衍生物使用 CC BY-NC-SA 4.0，仅限非商业用途。

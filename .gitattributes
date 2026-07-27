@@ -1,2 +1,3 @@
 # Keep repository text files portable across Windows and Linux.
 * text=auto eol=lf
+LICENSES/CC-BY-NC-SA-4.0.txt -whitespace

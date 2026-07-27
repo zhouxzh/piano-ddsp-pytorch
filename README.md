@@ -3,7 +3,9 @@
 [中文说明](README.zh-CN.md)
 
 This repository trains, exports, and evaluates causal MIDI-conditioned piano
-control models. Its first stable publication is the four-model
+control models specifically for later deployment on Ascend 310B. CPU and ONNX
+Runtime are reference validation paths, not additional deployment targets. Its
+first stable publication is the four-model
 `model-suite-v1.0.0`:
 
 | Model ID | Architecture | Harmonics / noise | Host reverb |
@@ -28,10 +30,13 @@ pip install -r requirements.txt
 python -m unittest discover -v
 ```
 
-Download the `model-suite-v1.0.0` GitHub Release assets into
-`artifacts/model-suite-v1.0.0/`, then verify them:
+Download the `model-suite-v1.0.0` revision from the Hugging Face model
+repository `zhouxzh/piano-ddsp-ascend310`, then verify it:
 
 ```bash
+HF_ENDPOINT=https://huggingface.co hf download zhouxzh/piano-ddsp-ascend310 \
+  --revision model-suite-v1.0.0 \
+  --local-dir artifacts/model-suite-v1.0.0
 cd artifacts/model-suite-v1.0.0
 sha256sum -c SHA256SUMS
 ```
@@ -60,6 +65,7 @@ and real-time tests belong in the downstream deployment repository.
 ## Documentation
 
 - [Models and release assets](docs/models.md)
+- [Publishing workflow](docs/publishing.md)
 - [Training and ONNX export](docs/training-and-export.md)
 - [Standard evaluation and local MIDI corpus](docs/evaluation.md)
 - [Real-time browser player](docs/realtime.md)
@@ -69,3 +75,5 @@ and real-time tests belong in the downstream deployment repository.
 Project additions are MIT-licensed. Adapted DDSP-Piano portions retain their
 Apache-2.0 obligations; see [LICENSE](LICENSE) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Published checkpoints, ONNX graphs, model parameters, and later OM derivatives
+are CC BY-NC-SA 4.0 and restricted to non-commercial use.

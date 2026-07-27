@@ -42,6 +42,28 @@ class ReleaseManifestTest(unittest.TestCase):
                 destination = (source.parent / target.split("#", 1)[0]).resolve()
                 self.assertTrue(destination.exists(), f"{source}: missing {target}")
 
+    def test_hf_model_artifacts_use_noncommercial_license(self) -> None:
+        model_card = (ROOT / "releases" / "huggingface-model-card.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("license: cc-by-nc-sa-4.0", model_card)
+        self.assertNotIn("license: apache-2.0", model_card)
+
+        model_license = (
+            ROOT / "LICENSES" / "CC-BY-NC-SA-4.0.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("NonCommercial purposes only", model_license)
+        self.assertIn("ShareAlike", model_license)
+
+        staging_script = (ROOT / "scripts" / "stage_hf_release.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'ROOT / "LICENSES/CC-BY-NC-SA-4.0.txt", output_dir / "LICENSE"',
+            staging_script,
+        )
+        self.assertIn('license_dir / "Apache-2.0.txt"', staging_script)
+
 
 if __name__ == "__main__":
     unittest.main()
