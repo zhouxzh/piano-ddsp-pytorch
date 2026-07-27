@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import shutil
 from pathlib import Path
 
@@ -58,6 +59,8 @@ def main() -> int:
     release_dir = args.release_dir.resolve()
     output_dir = args.output_dir.resolve()
     verify_release(release_dir)
+    manifest = json.loads((release_dir / "model-suite.json").read_text(encoding="utf-8"))
+    release = str(manifest["release"])
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError(
             f"Staging directory is not empty: {output_dir}. Use a new --output-dir."
@@ -70,6 +73,7 @@ def main() -> int:
 
     model_card = (ROOT / "releases/huggingface-model-card.md").read_text(encoding="utf-8")
     model_card = model_card.replace("zhouxzh/piano-ddsp-ascend310", args.repo_id)
+    model_card = model_card.replace(DEFAULT_RELEASE, release)
     (output_dir / "README.md").write_text(model_card, encoding="utf-8")
     license_dir = output_dir / "LICENSES"
     license_dir.mkdir(exist_ok=True)

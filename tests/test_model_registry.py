@@ -22,6 +22,16 @@ class ModelRegistryTest(unittest.TestCase):
         self.assertEqual(model_output_label(path, {"model_id": "film_fdn"}), "film_fdn")
         self.assertEqual(model_output_label(path, {}), "diagnostic")
 
+    def test_quality_first_candidate_registry_keeps_four_public_ids(self) -> None:
+        registry = load_model_registry(
+            Path("ddsp_piano/model-suite-v1.1.0-rc1.json")
+        )
+        self.assertEqual(registry.release, "model-suite-v1.1.0-rc1")
+        self.assertEqual(list(registry.models), list(load_model_registry().models))
+        for spec in registry.models.values():
+            self.assertEqual(spec.training["sampling_mode"], "coverage")
+            self.assertEqual(spec.training["batch_size"], 8)
+
 
 if __name__ == "__main__":
     unittest.main()

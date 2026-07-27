@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import random
+import sys
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -21,8 +23,10 @@ from ddsp_piano.maestro import MaestroSegmentDataset, PreprocessConfig, prepare_
 from ddsp_piano.modules.loss import HybridLoss
 from ddsp_piano.model_registry import load_model_registry
 from ddsp_piano.training_quality import (
+    CoverageCurriculumSampler,
     MixedCurriculumSampler,
     build_quality_manifest,
+    dataset_index_sha256,
     load_quality_manifest,
     velocity_slopes_tensor,
     write_quality_manifest,
@@ -35,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-dir", type=Path, default=Path("cache"))
     parser.add_argument("--experiment-dir", type=Path, default=Path("runs/piano_16k"))
     parser.add_argument("--model-id", default="paper_ir")
+    parser.add_argument("--registry", type=Path, help="Model-suite registry; defaults to the stable release")
     parser.add_argument("--prepare", action="store_true", help="Build missing track caches before training")
     parser.add_argument("--prepare-only", action="store_true", help="Build caches then exit")
     parser.add_argument("--prepare-splits", default="train,validation")
@@ -67,10 +72,22 @@ def parse_args() -> argparse.Namespace:
         help="Validate every N epochs; 0 validates only at the end of this invocation",
     )
     parser.add_argument("--lr", type=float)
-    parser.add_argument("--phase", choices=(1, 2), type=int, default=1)
+    parser.add_argument(
+        "--stage",
+        choices=("controls", "pitch", "refine", "calibrate"),
+        help="Explicit trainable parameter and detuning stage",
+    )
+    parser.add_argument(
+        "--phase",
+        choices=(1, 2),
+        type=int,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--device", default="auto", help="auto, cuda, cuda:N, or cpu")
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--grad-clip", type=float, default=1.0)
+    parser.add_argument("--warmup-fraction", type=float, default=0.02)
+    parser.add_argument("--minimum-lr-ratio", type=float, default=0.01)
     parser.add_argument(
         "--synthesis-layout",
         choices=("serial", "vectorized"),
@@ -121,7 +138,7 @@ def parse_args() -> argparse.Namespace:
         choices=("legacy", "residual_joint", "joint"),
         default="joint",
     )
-    parser.add_argument("--freeze-reverb", action="store_true")
+    parser.add_argument("--freeze-reverb", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--adapter-only", action="store_true")
     parser.add_argument(
         "--trainable-scope",
@@ -141,10 +158,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--velocity-response-ms", type=float, default=125.0)
     parser.add_argument("--loss-calibration-batches", type=int, default=0)
     parser.add_argument(
-        "--sampling-mode", choices=("uniform", "curriculum"), default="uniform"
+        "--sampling-mode",
+        choices=("uniform", "curriculum", "coverage"),
+        default="uniform",
     )
+    parser.add_argument("--curriculum-tail-fraction", type=float, default=0.2)
     parser.add_argument("--quality-manifest", type=Path)
-    parser.add_argument("--balanced-validation", action="store_true")
+    parser.add_argument(
+        "--balanced-validation",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--validation-every-examples",
+        type=int,
+        default=0,
+        help="Validate and checkpoint after this many stage examples; 0 uses epoch boundaries",
+    )
     parser.add_argument("--save-every", type=int, default=1)
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--weights", type=Path, help="Load model weights only, for phase changes")
@@ -169,6 +199,19 @@ def select_device(spec: str) -> torch.device:
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but torch.cuda.is_available() is false")
     return device
+
+
+def explicit_cli_destinations(arguments: list[str]) -> set[str]:
+    """Return argparse destination names explicitly present on the command line."""
+    result = set()
+    for argument in arguments:
+        if not argument.startswith("--"):
+            continue
+        name = argument[2:].split("=", 1)[0]
+        if name.startswith("no-"):
+            name = name[3:]
+        result.add(name.replace("-", "_"))
+    return result
 
 
 def config_from_args(args: argparse.Namespace) -> PreprocessConfig:
@@ -384,11 +427,15 @@ def set_adapter_only(model: torch.nn.Module) -> None:
         parameter.requires_grad = True
 
 
-def set_trainable_scope(model: torch.nn.Module, scope: str, phase: int) -> None:
+def set_trainable_scope(
+    model: torch.nn.Module,
+    scope: str,
+    phase: int | None = None,
+) -> None:
     """Apply training-only parameter scopes without changing model structure."""
     if scope == "phase_default":
         return
-    if phase != 1:
+    if phase is not None and phase != 1:
         raise ValueError("Explicit Q1 trainable scopes are only supported in phase 1")
     if scope == "joint":
         return
@@ -610,6 +657,83 @@ def run_validation(
     return float((loss_sum / batch_count).cpu())
 
 
+def build_lr_scheduler(
+    optimizer: torch.optim.Optimizer,
+    total_steps: int,
+    warmup_fraction: float,
+    minimum_ratio: float,
+) -> torch.optim.lr_scheduler.LambdaLR:
+    """Linear warmup followed by a cosine decay for one training stage."""
+    if total_steps <= 0:
+        raise ValueError("total_steps must be positive")
+    if not 0.0 <= warmup_fraction < 1.0:
+        raise ValueError("warmup_fraction must be in [0, 1)")
+    if not 0.0 <= minimum_ratio <= 1.0:
+        raise ValueError("minimum_ratio must be in [0, 1]")
+    warmup_steps = int(round(total_steps * warmup_fraction))
+
+    def scale(step: int) -> float:
+        if warmup_steps and step < warmup_steps:
+            return max(1, step + 1) / warmup_steps
+        decay_steps = max(1, total_steps - warmup_steps)
+        progress = min(1.0, max(0.0, (step - warmup_steps) / decay_steps))
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return minimum_ratio + (1.0 - minimum_ratio) * cosine
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, scale)
+
+
+def training_stage_metadata(
+    model: torch.nn.Module,
+    args: argparse.Namespace,
+    dataset: MaestroSegmentDataset,
+) -> dict:
+    trainable = [name for name, parameter in model.named_parameters() if parameter.requires_grad]
+    piano_counts: dict[str, int] = {}
+    for _, _, _, piano_id in dataset.index:
+        key = str(int(piano_id))
+        piano_counts[key] = piano_counts.get(key, 0) + 1
+    return {
+        "stage": args.stage,
+        "detune_enabled": bool(model.detuner.use_detune),
+        "trainable_parameters": trainable,
+        "trainable_parameter_count": sum(
+            parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+        ),
+        "dataset_segments": len(dataset),
+        "dataset_index_sha256": dataset_index_sha256(dataset.index),
+        "piano_model_segment_counts": piano_counts,
+        "sampling_mode": args.sampling_mode,
+        "curriculum_tail_fraction": (
+            args.curriculum_tail_fraction if args.sampling_mode == "coverage" else 0.0
+        ),
+    }
+
+
+def stage_progress_metadata(
+    base: dict,
+    epoch: int,
+    epoch_examples: int,
+    examples_seen: int,
+) -> dict:
+    result = dict(base)
+    dataset_segments = int(result["dataset_segments"])
+    result.update(
+        {
+            "stage_examples_seen": int(examples_seen),
+            "coverage_epoch": int(epoch),
+            "coverage_epoch_examples": int(epoch_examples),
+            "coverage_passes_completed": float(
+                epoch + min(epoch_examples, dataset_segments) / dataset_segments
+            ),
+            "curriculum_examples_seen_in_epoch": max(
+                0, int(epoch_examples) - dataset_segments
+            ),
+        }
+    )
+    return result
+
+
 def save_checkpoint(
     destination: Path,
     model: torch.nn.Module,
@@ -626,6 +750,10 @@ def save_checkpoint(
     examples_seen: int,
     train_generator: torch.Generator,
     training_performance: dict,
+    lr_scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
+    stage_metadata: dict | None = None,
+    sampler_state: dict | None = None,
+    epoch_complete: bool = True,
 ) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     serialized_args = {
@@ -633,7 +761,7 @@ def save_checkpoint(
         for key, value in vars(args).items()
     }
     payload = {
-        "schema": "ddsp-piano-training-checkpoint/v2",
+        "schema": "ddsp-piano-training-checkpoint/v3",
         "epoch": epoch,
         "global_step": global_step,
         "examples_seen": examples_seen,
@@ -648,6 +776,10 @@ def save_checkpoint(
         "validation_corpus_sha256": validation_corpus_sha256,
         "rng_state": capture_rng_state(train_generator),
         "training_performance": training_performance,
+        "lr_scheduler": lr_scheduler.state_dict() if lr_scheduler is not None else None,
+        "training_stage": stage_metadata,
+        "sampler_state": sampler_state,
+        "epoch_complete": bool(epoch_complete),
     }
     temporary = destination.with_suffix(destination.suffix + ".tmp")
     torch.save(
@@ -659,17 +791,27 @@ def save_checkpoint(
 
 def main() -> int:
     args = parse_args()
-    registry = load_model_registry()
+    explicit_cli = explicit_cli_destinations(sys.argv[1:])
+    registry = load_model_registry(args.registry) if args.registry is not None else load_model_registry()
     model_spec = registry.require(args.model_id)
     args.architecture = model_spec.architecture
     for name, value in model_spec.model.items():
         setattr(args, name, value)
     training_names = {"learning_rate": "lr"}
-    operational = {"lr", "epochs", "steps_per_epoch", "batch_size", "seed"}
     for name, value in model_spec.training.items():
         destination = training_names.get(name, name)
-        if destination not in operational or getattr(args, destination, None) is None:
+        if destination not in explicit_cli:
             setattr(args, destination, value)
+    if args.phase is not None:
+        if args.stage is not None:
+            raise ValueError("--phase and --stage are mutually exclusive")
+        args.stage = "controls" if args.phase == 1 else "pitch"
+        print(
+            f"warning: --phase is deprecated; mapped phase {args.phase} to --stage {args.stage}",
+            flush=True,
+        )
+    if args.stage is None:
+        args.stage = "controls"
     initialization_options = [
         args.resume is not None,
         args.weights is not None,
@@ -698,8 +840,12 @@ def main() -> int:
         raise ValueError("--energy-hard-fraction must be in [0, 1]")
     if args.velocity_response_ms <= 0:
         raise ValueError("--velocity-response-ms must be positive")
-    if args.sampling_mode == "curriculum" and args.quality_manifest is None:
-        raise ValueError("--sampling-mode curriculum requires --quality-manifest")
+    if args.sampling_mode in {"curriculum", "coverage"} and args.quality_manifest is None:
+        raise ValueError(f"--sampling-mode {args.sampling_mode} requires --quality-manifest")
+    if not 0.0 <= args.curriculum_tail_fraction <= 1.0:
+        raise ValueError("--curriculum-tail-fraction must be in [0, 1]")
+    if args.validation_every_examples < 0:
+        raise ValueError("--validation-every-examples must be non-negative")
     if args.adapter_only and args.trainable_scope != "phase_default":
         raise ValueError("--adapter-only cannot be combined with --trainable-scope")
     if args.freeze_reverb and args.trainable_scope == "reverb":
@@ -716,6 +862,10 @@ def main() -> int:
         raise ValueError("loader worker counts must be non-negative")
     if args.reverb_wet_gain < 0:
         raise ValueError("--reverb-wet-gain must be non-negative")
+    if not 0.0 <= args.warmup_fraction < 1.0:
+        raise ValueError("--warmup-fraction must be in [0, 1)")
+    if not 0.0 <= args.minimum_lr_ratio <= 1.0:
+        raise ValueError("--minimum-lr-ratio must be in [0, 1]")
     if args.loss_version == "perceptual_v2" and args.dry_loss_weight:
         print("perceptual_v2 ignores --dry-loss-weight", flush=True)
     if args.architecture == "paper" and (
@@ -791,6 +941,12 @@ def main() -> int:
             [entry["curriculum_weight"] for entry in quality_manifest["entries"]],
             train_generator,
         )
+    elif args.sampling_mode == "coverage":
+        curriculum_sampler = CoverageCurriculumSampler(
+            quality_manifest["entries"],
+            seed=args.seed,
+            tail_fraction=args.curriculum_tail_fraction,
+        )
     train_loader = make_loader(
         train_dataset,
         args,
@@ -835,8 +991,8 @@ def main() -> int:
             inharmonicity_type=args.inharmonicity_type,
         )
     model = model_builder(**model_kwargs).to(device)
-    model.alternate_training(first_phase=args.phase == 1)
-    set_trainable_scope(model, args.trainable_scope, args.phase)
+    model.configure_training_stage(args.stage)
+    set_trainable_scope(model, args.trainable_scope)
     if args.freeze_reverb:
         for parameter in model.reverb_model.parameters():
             parameter.requires_grad = False
@@ -845,7 +1001,7 @@ def main() -> int:
     loss_fn = HybridLoss(
         [2048, 1024, 512, 256, 128, 64],
         model.inharm_model,
-        phase=args.phase == 1,
+        phase=args.stage != "pitch",
         weight=args.reverb_regularizer_weight,
         dry_weight=args.dry_loss_weight,
         wet_weight=args.wet_loss_weight,
@@ -903,12 +1059,28 @@ def main() -> int:
         (parameter for parameter in model.parameters() if parameter.requires_grad),
         **optimizer_kwargs,
     )
+    full_steps_per_epoch = len(train_loader)
+    if args.steps_per_epoch:
+        full_steps_per_epoch = min(full_steps_per_epoch, args.steps_per_epoch)
+    lr_scheduler = build_lr_scheduler(
+        optimizer,
+        total_steps=max(1, args.epochs * full_steps_per_epoch),
+        warmup_fraction=args.warmup_fraction,
+        minimum_ratio=args.minimum_lr_ratio,
+    )
+    resume_epoch_offset = 0
     if args.resume is not None:
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        checkpoint_stage = checkpoint.get("training_stage") or {}
+        if checkpoint_stage.get("stage") not in {None, args.stage}:
+            raise ValueError(
+                f"checkpoint stage {checkpoint_stage.get('stage')!r} does not match {args.stage!r}"
+            )
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         scaler.load_state_dict(checkpoint.get("scaler", {}))
-        start_epoch = int(checkpoint["epoch"]) + 1
+        epoch_complete = bool(checkpoint.get("epoch_complete", True))
+        start_epoch = int(checkpoint["epoch"]) + int(epoch_complete)
         global_step = int(checkpoint["global_step"])
         examples_seen = int(checkpoint.get("examples_seen", global_step * args.batch_size))
         best_validation = float(checkpoint["best_validation"])
@@ -919,7 +1091,19 @@ def main() -> int:
             "validation_corpus_sha256", validation_corpus_sha256
         )
         restore_rng_state(checkpoint.get("rng_state"), train_generator)
-        print(f"resumed {args.resume} at epoch={start_epoch} step={global_step}", flush=True)
+        if checkpoint.get("lr_scheduler") is not None:
+            lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        sampler_state = checkpoint.get("sampler_state")
+        if sampler_state is not None:
+            if not isinstance(curriculum_sampler, CoverageCurriculumSampler):
+                raise ValueError("checkpoint requires --sampling-mode coverage")
+            curriculum_sampler.load_state_dict(sampler_state)
+            resume_epoch_offset = int(sampler_state["start_offset"])
+        print(
+            f"resumed {args.resume} at epoch={start_epoch} offset={resume_epoch_offset} "
+            f"step={global_step}",
+            flush=True,
+        )
     elif args.loss_version == "perceptual_v2":
         calibration_source, calibration_sha256 = fixed_calibration_subset(
             train_dataset, args.loss_calibration_batches, args.seed
@@ -971,20 +1155,32 @@ def main() -> int:
         training_model = torch.compile(model, mode=args.compile_mode)
         print(f"compiled training forward with mode={args.compile_mode}", flush=True)
     training_performance: dict = {}
+    base_stage_metadata = training_stage_metadata(model, args, train_dataset)
 
     print(
         f"device={device} train_segments={len(train_dataset)} "
-        f"validation_segments={len(validation_source)} piano_models={train_dataset.piano_models}",
+        f"validation_segments={len(validation_source)} piano_models={train_dataset.piano_models} "
+        f"stage={args.stage} detune={model.detuner.use_detune} "
+        f"trainable_parameters={base_stage_metadata['trainable_parameter_count']}",
         flush=True,
     )
     for epoch in range(start_epoch, args.epochs):
+        epoch_start_offset = resume_epoch_offset if epoch == start_epoch else 0
+        if isinstance(curriculum_sampler, CoverageCurriculumSampler):
+            curriculum_sampler.set_epoch(epoch, epoch_start_offset)
         model.train()
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
         epoch_started = time.perf_counter()
         train_loss_sum = torch.zeros((), device=device)
         train_batches = 0
-        epoch_examples = 0
+        epoch_examples = epoch_start_offset
+        next_validation_example = (
+            ((epoch_examples // args.validation_every_examples) + 1)
+            * args.validation_every_examples
+            if args.validation_every_examples
+            else 0
+        )
         for batch_index, batch in enumerate(train_loader):
             if args.steps_per_epoch and batch_index >= args.steps_per_epoch:
                 break
@@ -1046,6 +1242,7 @@ def main() -> int:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             scaler.step(optimizer)
             scaler.update()
+            lr_scheduler.step()
             global_step += 1
             batch_examples = int(audio.shape[0])
             examples_seen += batch_examples
@@ -1075,6 +1272,112 @@ def main() -> int:
                     f"velocity={logged[8]:.5f}",
                     flush=True,
                 )
+            if (
+                args.validation_every_examples
+                and epoch_examples >= next_validation_example
+            ):
+                validation_loss = run_validation(
+                    model,
+                    loss_fn,
+                    validation_loader,
+                    device,
+                    amp_enabled,
+                    args.validation_batches,
+                    args.velocity_loss_weight,
+                    args.velocity_loss_every,
+                    float(loss_calibration.get("velocity_scale", 1.0)),
+                    args.velocity_counterfactual_layout == "combined",
+                    response_slopes,
+                    max(
+                        1,
+                        int(
+                            round(
+                                config.frame_rate
+                                * args.velocity_response_ms
+                                / 1000.0
+                            )
+                        ),
+                    ),
+                )
+                partial_performance = {
+                    "epoch": epoch,
+                    "steps": train_batches,
+                    "seconds": time.perf_counter() - epoch_started,
+                    "examples": epoch_examples,
+                    "partial_epoch": True,
+                    "peak_cuda_memory_bytes": (
+                        int(torch.cuda.max_memory_allocated(device))
+                        if device.type == "cuda"
+                        else 0
+                    ),
+                }
+                progress = stage_progress_metadata(
+                    base_stage_metadata, epoch, epoch_examples, examples_seen
+                )
+                sampler_state = (
+                    curriculum_sampler.state_dict(epoch_examples)
+                    if isinstance(curriculum_sampler, CoverageCurriculumSampler)
+                    else None
+                )
+                partial_metrics = {
+                    "event": "validation",
+                    "epoch": epoch,
+                    "global_step": global_step,
+                    "examples_seen": examples_seen,
+                    "coverage_epoch_examples": epoch_examples,
+                    "validation_loss": validation_loss,
+                    "learning_rate": lr_scheduler.get_last_lr()[0],
+                    "train_performance": partial_performance,
+                }
+                with metrics_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(partial_metrics) + "\n")
+                print(json.dumps(partial_metrics), flush=True)
+                if validation_loss < best_validation:
+                    best_validation = validation_loss
+                    save_checkpoint(
+                        args.experiment_dir / "checkpoints" / "best.pt",
+                        model,
+                        optimizer,
+                        scaler,
+                        epoch,
+                        global_step,
+                        best_validation,
+                        args,
+                        train_dataset.piano_models,
+                        loss_calibration,
+                        initialization,
+                        validation_corpus_sha256,
+                        examples_seen,
+                        train_generator,
+                        partial_performance,
+                        lr_scheduler,
+                        progress,
+                        sampler_state,
+                        False,
+                    )
+                save_checkpoint(
+                    args.experiment_dir / "checkpoints" / "last.pt",
+                    model,
+                    optimizer,
+                    scaler,
+                    epoch,
+                    global_step,
+                    best_validation,
+                    args,
+                    train_dataset.piano_models,
+                    loss_calibration,
+                    initialization,
+                    validation_corpus_sha256,
+                    examples_seen,
+                    train_generator,
+                    partial_performance,
+                    lr_scheduler,
+                    progress,
+                    sampler_state,
+                    False,
+                )
+                next_validation_example += args.validation_every_examples
+                model.train()
 
         if not train_batches:
             raise RuntimeError("Training loader produced no batches")
@@ -1088,7 +1391,7 @@ def main() -> int:
             "seconds": train_seconds,
             "steps_per_second": train_batches / max(train_seconds, 1e-9),
             "examples_per_second": (
-                epoch_examples / max(train_seconds, 1e-9)
+                (epoch_examples - epoch_start_offset) / max(train_seconds, 1e-9)
             ),
             "peak_cuda_memory_bytes": (
                 int(torch.cuda.max_memory_allocated(device))
@@ -1128,12 +1431,22 @@ def main() -> int:
             "examples_seen": examples_seen,
             "train_loss": mean_train_loss,
             "validation_loss": validation_loss,
+            "learning_rate": lr_scheduler.get_last_lr()[0],
             "train_performance": training_performance,
             "validation_seconds": validation_seconds,
         }
         with metrics_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(metrics) + "\n")
         print(json.dumps(metrics), flush=True)
+
+        progress = stage_progress_metadata(
+            base_stage_metadata, epoch, epoch_examples, examples_seen
+        )
+        sampler_state = (
+            curriculum_sampler.state_dict(epoch_examples)
+            if isinstance(curriculum_sampler, CoverageCurriculumSampler)
+            else None
+        )
 
         if validation_loss is not None and validation_loss < best_validation:
             best_validation = validation_loss
@@ -1153,6 +1466,10 @@ def main() -> int:
                 examples_seen,
                 train_generator,
                 training_performance,
+                lr_scheduler,
+                progress,
+                sampler_state,
+                True,
             )
         save_checkpoint(
             args.experiment_dir / "checkpoints" / "last.pt",
@@ -1170,6 +1487,10 @@ def main() -> int:
             examples_seen,
             train_generator,
             training_performance,
+            lr_scheduler,
+            progress,
+            sampler_state,
+            True,
         )
         if args.save_every and (epoch + 1) % args.save_every == 0:
             save_checkpoint(
@@ -1188,7 +1509,12 @@ def main() -> int:
                 examples_seen,
                 train_generator,
                 training_performance,
+                lr_scheduler,
+                progress,
+                sampler_state,
+                True,
             )
+        resume_epoch_offset = 0
     return 0
 
 

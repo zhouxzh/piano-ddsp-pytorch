@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from ddsp_piano.training_quality import (
+    CoverageCurriculumSampler,
     MixedCurriculumSampler,
     build_quality_manifest,
     load_quality_manifest,
@@ -67,6 +68,27 @@ class TrainingQualityTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(first), 4)
         self.assertTrue(all(0 <= index < 4 for index in first))
+
+    def test_coverage_curriculum_sampler_covers_then_resumes_exactly(self):
+        entries = [
+            {
+                "piano_model": index % 2,
+                "stratum": f"s{index % 3}",
+                "curriculum_weight": float(index + 1),
+            }
+            for index in range(20)
+        ]
+        sampler = CoverageCurriculumSampler(entries, seed=17, tail_fraction=0.2)
+        full = list(sampler)
+        self.assertEqual(len(full), 24)
+        self.assertEqual(set(full[:20]), set(range(20)))
+
+        sampler.set_epoch(0, start_offset=7)
+        self.assertEqual(list(sampler), full[7:])
+        state = sampler.state_dict(consumed=11)
+        restored = CoverageCurriculumSampler(entries, seed=17, tail_fraction=0.2)
+        restored.load_state_dict(state)
+        self.assertEqual(list(restored), full[11:])
 
 if __name__ == "__main__":
     unittest.main()

@@ -72,6 +72,7 @@ def public_checkpoint(source: Path, destination: Path, model_spec, release: str)
         "quality_manifest",
     ):
         args[name] = None
+    args["registry"] = f"ddsp_piano/{release}.json"
     args["maestro_root"] = "data/maestro-v3.0.0"
     args["cache_dir"] = "cache/maestro-v3.0.0"
     args["experiment_dir"] = f"runs/{model_spec.model_id}"
@@ -109,11 +110,12 @@ def public_checkpoint(source: Path, destination: Path, model_spec, release: str)
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", action="append", required=True, metavar="MODEL_ID=CHECKPOINT")
-    parser.add_argument("--output-dir", type=Path, default=Path("artifacts/model-suite-v1.0.0"))
+    parser.add_argument("--registry", type=Path)
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--verify-steps", type=int, default=100)
     args = parser.parse_args()
 
-    registry = load_model_registry()
+    registry = load_model_registry(args.registry) if args.registry is not None else load_model_registry()
     sources = parse_sources(args.source)
     missing = set(registry.models) - set(sources)
     extra = set(sources) - set(registry.models)
@@ -123,7 +125,7 @@ def main() -> int:
         missing_paths = [str(path) for path in sources.values() if not path.is_file()]
         raise FileNotFoundError(f"Checkpoint files not found: {missing_paths}")
 
-    output_dir = args.output_dir.resolve()
+    output_dir = (args.output_dir or Path("artifacts") / registry.release).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, Any] = {
         "schema": "ddsp-piano-release/v1",
@@ -153,6 +155,8 @@ def main() -> int:
                 str(ROOT / "scripts" / "export_onnx.py"),
                 "--model-id",
                 model_id,
+                "--registry",
+                str(registry.source),
                 "--checkpoint",
                 str(checkpoint_path),
                 "--output",

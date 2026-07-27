@@ -139,6 +139,65 @@ class ListeningTest(unittest.TestCase):
             )
             self.assertIn(first_deadline, page)
 
+    def test_untouched_default_ratings_do_not_count_as_scores(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            review = create_listening_package(
+                output, "preference-only", [self._item()], 30, -23.0, -3.0
+            )
+            write_json(
+                output / "report.json",
+                {
+                    "evaluation_id": "preference-only",
+                    "human_review": review,
+                    "verdict": {"objective_eligible": True},
+                },
+            )
+            mapping = read_json(output / "private" / "blind_mapping.json")["mapping"]
+            trials = []
+            for trial_id, sides in mapping.items():
+                candidate_side = "A" if sides["A"] == "candidate" else "B"
+                trials.append(
+                    {
+                        "trial_id": trial_id,
+                        "preference": candidate_side,
+                        "ratings": {name: {"A": 3, "B": 3} for name in DIMENSIONS},
+                        "rating_touched": {
+                            name: {"A": False, "B": False} for name in DIMENSIONS
+                        },
+                        "severe_artifact": {"A": False, "B": False},
+                        "notes": "",
+                    }
+                )
+            scores = output / "scores.json"
+            write_json(
+                scores,
+                {
+                    "schema": LISTENING_SCHEMA,
+                    "evaluation_id": "preference-only",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "trials": trials,
+                },
+            )
+            finalized = finalize_review(
+                output,
+                scores,
+                {
+                    "gates": {
+                        "human_preference_rate": 0.6,
+                        "human_dimension_regression": 0.25,
+                        "human_repeated_artifacts": 2,
+                    }
+                },
+            )
+            self.assertEqual(finalized["human_review"]["status"], "passed")
+            self.assertTrue(
+                all(
+                    count == 0
+                    for count in finalized["human_review"]["dimension_rating_counts"].values()
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

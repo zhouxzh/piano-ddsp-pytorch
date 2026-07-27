@@ -66,3 +66,19 @@ HF_ENDPOINT=https://huggingface.co hf download zhouxzh/piano-ddsp-ascend310 \
 
 上传目录只能由 staging 脚本从已验证发布目录生成。不要把 MAESTRO 数据、本地 MIDI、训练日志、
 试听 WAV、缓存或服务器绝对路径上传到模型仓库。
+
+`model-suite-v1.1.0-rc1` 在训练结束后仍是人工评测候选。只有四个自动报告都通过且人工结果完成后，
+才能暂存并上传；流水线本身不会执行这些命令：
+
+```bash
+python scripts/stage_hf_release.py \
+  --repo-id zhouxzh/piano-ddsp-ascend310 \
+  --release-dir artifacts/model-suite-v1.1.0-rc1 \
+  --output-dir artifacts/hf-upload/model-suite-v1.1.0-rc1
+HF_ENDPOINT=https://huggingface.co hf upload zhouxzh/piano-ddsp-ascend310 \
+  artifacts/hf-upload/model-suite-v1.1.0-rc1 \
+  --commit-message "Release model-suite-v1.1.0" --create-pr
+```
+
+先通过 HF PR 检查附件和许可证，再合并并建立正式的 `model-suite-v1.1.0` 标签。候选或失败权重
+不得覆盖 `v1.0.0`，也不得根据 ONNX 验证声称已经完成 OM/CANN 验证。

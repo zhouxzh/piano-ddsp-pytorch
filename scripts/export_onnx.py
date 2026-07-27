@@ -117,6 +117,7 @@ def main() -> int:
     parser.add_argument("--rtol", type=float, default=1e-4)
     parser.add_argument("--verify-steps", type=int, default=100)
     parser.add_argument("--model-id", required=True)
+    parser.add_argument("--registry", type=Path, help="Model-suite registry used for this checkpoint")
     args = parser.parse_args()
 
     if args.frames <= 0:
@@ -124,7 +125,7 @@ def main() -> int:
     if args.verify_steps <= 0:
         raise ValueError("--verify-steps must be positive")
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    registry = load_model_registry()
+    registry = load_model_registry(args.registry) if args.registry is not None else load_model_registry()
     model_spec = registry.require(args.model_id)
     piano_models = checkpoint.get("piano_models")
     if not piano_models:
@@ -171,8 +172,19 @@ def main() -> int:
         )
     model = model_builder(**model_kwargs)
     model.load_state_dict(checkpoint["model"])
-    phase = int(checkpoint.get("args", {}).get("phase", 1))
-    model.alternate_training(first_phase=phase == 1)
+    stage_metadata = checkpoint.get("training_stage") or {}
+    training_stage = stage_metadata.get("stage") or checkpoint_args.get("stage")
+    legacy_phase_value = checkpoint_args.get("phase")
+    legacy_phase = int(legacy_phase_value) if legacy_phase_value is not None else 1
+    detune_enabled = bool(
+        stage_metadata.get(
+            "detune_enabled",
+            training_stage in {"pitch", "refine", "calibrate"}
+            if training_stage is not None
+            else legacy_phase != 1,
+        )
+    )
+    model.set_detune_enabled(detune_enabled)
     model.eval()
     export_model = PianoRealtimeControlModel(model).eval()
 
@@ -266,7 +278,9 @@ def main() -> int:
         "frames_per_call": args.frames,
         "audio_samples_per_call": args.frames * (sample_rate // frame_rate),
         "release_frames": frame_rate,
-        "training_phase": phase,
+        "training_stage": training_stage,
+        "training_phase": legacy_phase if training_stage is None else None,
+        "detune_enabled": detune_enabled,
         "onnx_status": "verified",
         "om_status": "pending",
         "quality_status": model_spec.quality_status,

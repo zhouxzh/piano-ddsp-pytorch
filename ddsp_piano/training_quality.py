@@ -132,6 +132,7 @@ def build_quality_manifest(dataset, sample_rate: int, frame_rate: int, seed: int
             onset_count = onset_count_prefix[frame_end] - onset_count_prefix[frame_start]
             entries[index] = {
                 "index": index,
+                "piano_model": int(piano_id),
                 "rms": rms,
                 "spectral_centroid_hz": spectral_moment,
                 "mean_onset_velocity": (
@@ -234,6 +235,100 @@ def load_quality_manifest(path: Path, dataset) -> dict:
     if manifest.get("dataset_index_sha256") != dataset_index_sha256(dataset.index):
         raise ValueError("Quality manifest does not match the training dataset index")
     return manifest
+
+
+class CoverageCurriculumSampler(Sampler[int]):
+    """Yield every segment once, followed by a weighted curriculum tail.
+
+    The order is derived only from ``seed`` and ``epoch``.  ``start_offset``
+    therefore supports exact restart without serializing a large index list.
+    """
+
+    def __init__(
+        self,
+        entries: list[dict],
+        seed: int,
+        tail_fraction: float = 0.2,
+    ) -> None:
+        if not entries:
+            raise ValueError("Coverage entries must be non-empty")
+        if not 0.0 <= tail_fraction <= 1.0:
+            raise ValueError("tail_fraction must be in [0, 1]")
+        self.entries = entries
+        self.seed = int(seed)
+        self.tail_fraction = float(tail_fraction)
+        self.epoch = 0
+        self.start_offset = 0
+        self._full_length = len(entries) + int(round(len(entries) * tail_fraction))
+
+    def set_epoch(self, epoch: int, start_offset: int = 0) -> None:
+        if epoch < 0 or not 0 <= start_offset <= self._full_length:
+            raise ValueError("invalid coverage sampler position")
+        self.epoch = int(epoch)
+        self.start_offset = int(start_offset)
+
+    def state_dict(self, consumed: int | None = None) -> dict:
+        return {
+            "schema": "ddsp-piano-coverage-sampler/v1",
+            "epoch": self.epoch,
+            "start_offset": self.start_offset if consumed is None else int(consumed),
+            "full_length": self._full_length,
+            "tail_fraction": self.tail_fraction,
+            "seed": self.seed,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        if state.get("schema") != "ddsp-piano-coverage-sampler/v1":
+            raise ValueError("unsupported coverage sampler state")
+        if int(state["full_length"]) != self._full_length:
+            raise ValueError("coverage sampler length changed since checkpoint")
+        if float(state["tail_fraction"]) != self.tail_fraction:
+            raise ValueError("coverage sampler tail fraction changed since checkpoint")
+        if int(state["seed"]) != self.seed:
+            raise ValueError("coverage sampler seed changed since checkpoint")
+        self.set_epoch(int(state["epoch"]), int(state["start_offset"]))
+
+    def __len__(self) -> int:
+        return self._full_length - self.start_offset
+
+    def _coverage_order(self, generator: torch.Generator) -> list[int]:
+        groups: dict[tuple[int, str], list[int]] = defaultdict(list)
+        for index, entry in enumerate(self.entries):
+            groups[(int(entry.get("piano_model", -1)), str(entry["stratum"]))].append(index)
+        for indices in groups.values():
+            permutation = torch.randperm(len(indices), generator=generator).tolist()
+            indices[:] = [indices[position] for position in permutation]
+
+        keys = list(groups)
+        order: list[int] = []
+        while keys:
+            key_order = torch.randperm(len(keys), generator=generator).tolist()
+            exhausted = []
+            for key_position in key_order:
+                key = keys[key_position]
+                order.append(groups[key].pop())
+                if not groups[key]:
+                    exhausted.append(key)
+            if exhausted:
+                exhausted_set = set(exhausted)
+                keys = [key for key in keys if key not in exhausted_set]
+        return order
+
+    def __iter__(self) -> Iterator[int]:
+        generator = torch.Generator().manual_seed(self.seed + self.epoch)
+        coverage = self._coverage_order(generator)
+        tail_count = self._full_length - len(coverage)
+        weights = torch.as_tensor(
+            [float(entry["curriculum_weight"]) for entry in self.entries],
+            dtype=torch.double,
+        )
+        tail = torch.multinomial(
+            weights,
+            tail_count,
+            replacement=True,
+            generator=generator,
+        ).tolist()
+        return iter((coverage + tail)[self.start_offset :])
 
 
 class MixedCurriculumSampler(Sampler[int]):

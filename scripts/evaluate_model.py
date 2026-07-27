@@ -389,8 +389,10 @@ def run_command(args: argparse.Namespace, config: dict) -> int:
     registry = load_model_registry()
     baseline_spec = registry.require(args.baseline_id)
     candidate_spec = registry.require(args.candidate_id)
-    baseline_path = baseline_spec.asset_path(args.artifacts_dir, ".onnx").resolve()
-    candidate_path = candidate_spec.asset_path(args.artifacts_dir, ".onnx").resolve()
+    baseline_dir = args.baseline_artifacts_dir or args.artifacts_dir
+    candidate_dir = args.candidate_artifacts_dir or args.artifacts_dir
+    baseline_path = baseline_spec.asset_path(baseline_dir, ".onnx").resolve()
+    candidate_path = candidate_spec.asset_path(candidate_dir, ".onnx").resolve()
     corpus_path = args.corpus or _default_corpus_path(config, args.profile)
     if not corpus_path.is_file():
         raise FileNotFoundError(
@@ -660,6 +662,16 @@ def parser() -> argparse.ArgumentParser:
         "--artifacts-dir",
         type=Path,
         default=ROOT / "artifacts" / "model-suite-v1.0.0",
+    )
+    run.add_argument(
+        "--baseline-artifacts-dir",
+        type=Path,
+        help="Baseline model directory; defaults to --artifacts-dir",
+    )
+    run.add_argument(
+        "--candidate-artifacts-dir",
+        type=Path,
+        help="Candidate model directory; defaults to --artifacts-dir",
     )
     run.add_argument("--profile", choices=("quick", "dev", "release"), default="dev")
     run.add_argument("--corpus", type=Path)

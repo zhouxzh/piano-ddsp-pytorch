@@ -52,32 +52,53 @@ class PianoModel(nn.Module):
         if layout not in {"serial", "vectorized"}:
             raise ValueError("synthesis_layout must be 'serial' or 'vectorized'")
         self.synthesis_layout = layout
+
+    def set_detune_enabled(self, enabled=True):
+        """Control detuning independently from the training parameter scope."""
+        self.detuner.use_detune = bool(enabled)
+
+    def configure_training_stage(self, stage="controls"):
+        """Configure trainable parameters for one explicit training stage.
+
+        Detuning is deliberately independent from trainability.  In particular,
+        ``refine`` and ``calibrate`` use the learned pitch model while updating
+        only the main control path.
+        """
+        if stage not in {"controls", "pitch", "refine", "calibrate"}:
+            raise ValueError(f"unsupported training stage: {stage}")
+
+        for parameter in self.parameters():
+            parameter.requires_grad = False
+
+        pitch_stage = stage == "pitch"
+        if pitch_stage:
+            pitch_modules = [self.inharm_model, self.detuner]
+            for module in pitch_modules:
+                if module is not None:
+                    for parameter in module.parameters():
+                        parameter.requires_grad = True
+            self.z_encoder.inharm_embedding.weight.requires_grad_(True)
+            self.z_encoder.detune_embedding.weight.requires_grad_(True)
+        else:
+            self.z_encoder.embedding.weight.requires_grad_(True)
+            for module in (
+                self.note_release,
+                self.context_network,
+                self.monophonic_network,
+                self.reverb_model,
+            ):
+                if module is not None:
+                    for parameter in module.parameters():
+                        parameter.requires_grad = True
+
+        self.set_detune_enabled(stage != "controls")
         
     def alternate_training(self, first_phase=True):
         """Toggle trainability of submodules for the 1st or 2nd training phase.
         Args:
             - first_phase (bool): whether using the 1st phase training strategy
         """
-        # Modules involved with partial frequency computing are frozen during
-        # the first training phase strategy.
-        for module in [self.inharm_model, self.detuner]:
-            if module is not None:
-                for param in module.parameters():
-                    param.requires_grad = not first_phase
-        
-        self.z_encoder.alternate_training(first_phase)
-
-        # Modules not involved in freq computing have inversed trainability
-        for module in [self.note_release,
-                       self.context_network,
-                       self.monophonic_network,
-                       self.reverb_model]:
-            if module is not None:
-                for param in module.parameters():
-                    param.requires_grad = first_phase
-        
-        # Compute multiple note signals only when learning detuner weights
-        self.detuner.use_detune = not first_phase
+        self.configure_training_stage("controls" if first_phase else "pitch")
 
     def synthesize_harmonic_part(self, harmonic_synthesizer, amplitudes, harmonic_distribution, inharm_coef, f0_hz):
         params = harmonic_synthesizer.get_controls(amplitudes, harmonic_distribution, inharm_coef, f0_hz)

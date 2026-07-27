@@ -26,6 +26,12 @@ from train import velocity_counterfactual_loss
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-id", default="calibrated_ir")
+    parser.add_argument("--registry", type=Path)
+    parser.add_argument(
+        "--stage",
+        choices=("controls", "pitch", "refine", "calibrate"),
+        default="controls",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--segment-seconds", type=float, default=3.0)
@@ -47,7 +53,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_model(args: argparse.Namespace, device: torch.device) -> torch.nn.Module:
-    spec = load_model_registry().require(args.model_id)
+    registry = load_model_registry(args.registry) if args.registry is not None else load_model_registry()
+    spec = registry.require(args.model_id)
     model_config = spec.model
     common = {
         "n_synths": args.polyphony,
@@ -70,7 +77,7 @@ def build_model(args: argparse.Namespace, device: torch.device) -> torch.nn.Modu
             monophonic_type=str(model_config["monophonic_type"]),
             inharmonicity_type=str(model_config["inharmonicity_type"]),
         )
-    model.alternate_training(first_phase=True)
+    model.configure_training_stage(args.stage)
     freeze_reverb = (
         bool(spec.training.get("freeze_reverb", False))
         if args.freeze_reverb is None
@@ -112,7 +119,8 @@ def synchronize(device: torch.device) -> None:
 
 def main() -> int:
     args = parse_args()
-    spec = load_model_registry().require(args.model_id)
+    registry = load_model_registry(args.registry) if args.registry is not None else load_model_registry()
+    spec = registry.require(args.model_id)
     if args.batch_size <= 0 or args.warmup_steps < 0 or args.timed_steps <= 0:
         raise ValueError("batch and step counts must be positive")
     device = torch.device(args.device)
@@ -141,7 +149,7 @@ def main() -> int:
     loss_fn = HybridLoss(
         [2048, 1024, 512, 256, 128, 64],
         model.inharm_model,
-        phase=True,
+        phase=args.stage != "pitch",
         weight=float(spec.training.get("reverb_regularizer_weight", 0.05)),
         dry_weight=float(spec.training.get("dry_loss_weight", 0.7)),
         wet_weight=float(spec.training.get("wet_loss_weight", 0.3)),
@@ -204,6 +212,8 @@ def main() -> int:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "model_id": args.model_id,
         "architecture": spec.architecture,
+        "training_stage": args.stage,
+        "detune_enabled": bool(model.detuner.use_detune),
         "device": str(device),
         "device_name": device_name,
         "torch_version": torch.__version__,

@@ -15,6 +15,7 @@ from ddsp_piano.modules.loss import SSSLoss
 from ddsp_piano.modules.piano_model import PianoModel
 from train import (
     capture_rng_state,
+    explicit_cli_destinations,
     load_finetune_initialization,
     restore_rng_state,
     save_checkpoint,
@@ -178,6 +179,14 @@ class TrainingOptimizationTest(unittest.TestCase):
         torch.testing.assert_close(actual[2], expected[2])
         torch.testing.assert_close(actual[3], expected[3])
 
+    def test_explicit_cli_destinations_normalize_boolean_and_assignment_flags(self):
+        self.assertEqual(
+            explicit_cli_destinations(
+                ["--batch-size=8", "--no-balanced-validation", "value"]
+            ),
+            {"batch_size", "balanced_validation"},
+        )
+
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
     def test_rng_state_restores_after_checkpoint_is_mapped_to_cuda(self):
         random.seed(11)
@@ -230,7 +239,7 @@ class TrainingOptimizationTest(unittest.TestCase):
                 training_performance={"steps_per_second": 4.0},
             )
             checkpoint = torch.load(destination, weights_only=False)
-        self.assertEqual(checkpoint["schema"], "ddsp-piano-training-checkpoint/v2")
+        self.assertEqual(checkpoint["schema"], "ddsp-piano-training-checkpoint/v3")
         self.assertEqual(checkpoint["examples_seen"], 60)
         self.assertIn("rng_state", checkpoint)
         self.assertEqual(checkpoint["training_performance"]["steps_per_second"], 4.0)
@@ -279,6 +288,27 @@ class TrainingOptimizationTest(unittest.TestCase):
         }
         self.assertTrue(trainable)
         self.assertTrue(all(name.startswith("reverb_model.") for name in trainable))
+
+    def test_explicit_training_stages_keep_detune_active_during_refine(self):
+        model = build_paper_model(
+            n_synths=2,
+            n_piano_models=2,
+            duration=4 / 250,
+            frame_rate=250,
+            sample_rate=16_000,
+            reverb_duration=4 / 250,
+        )
+        model.configure_training_stage("pitch")
+        self.assertTrue(model.detuner.use_detune)
+        self.assertTrue(any(p.requires_grad for p in model.detuner.parameters()))
+        self.assertFalse(any(p.requires_grad for p in model.monophonic_network.parameters()))
+
+        model.configure_training_stage("refine")
+        self.assertTrue(model.detuner.use_detune)
+        self.assertFalse(any(p.requires_grad for p in model.detuner.parameters()))
+        self.assertTrue(any(p.requires_grad for p in model.monophonic_network.parameters()))
+        self.assertTrue(model.z_encoder.embedding.weight.requires_grad)
+        self.assertFalse(model.z_encoder.detune_embedding.weight.requires_grad)
 
 
 if __name__ == "__main__":

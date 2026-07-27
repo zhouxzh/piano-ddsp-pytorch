@@ -53,6 +53,16 @@ state whenever the model is changed.
 
 ## Deployment Boundary
 
+The quality-first four-model retraining pipeline is started with:
+
+```bash
+python scripts/train_model_suite.py
+```
+
+It uses the separate `model-suite-v1.1.0-rc1` registry, explicit
+`controls/pitch/refine` stages, complete dataset coverage, and all ten MAESTRO
+recording-domain embeddings. The stable `v1.0.0` registry is not modified.
+
 The exported graph is FP32 ONNX opset 13 with fixed batch 1, one 250 Hz frame,
 16 voices, 16 kHz audio, and explicit recurrent state. Harmonic phase,
 filtered-noise synthesis, reverb, and the one-second MIDI release state remain
@@ -67,6 +77,7 @@ and real-time tests belong in the downstream deployment repository.
 - [Models and release assets](docs/models.md)
 - [Publishing workflow](docs/publishing.md)
 - [Training and ONNX export](docs/training-and-export.md)
+- [v1.1 quality-first training plan](docs/training-v1.1.md)
 - [Standard evaluation and local MIDI corpus](docs/evaluation.md)
 - [Real-time browser player](docs/realtime.md)
 - [Ascend 310B handoff contract](docs/ascend-310b.md)

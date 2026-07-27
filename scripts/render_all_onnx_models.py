@@ -101,6 +101,11 @@ def main() -> int:
         default=Path("artifacts/listening/all_models"),
     )
     parser.add_argument("--piano-model", type=int, default=9)
+    parser.add_argument(
+        "--all-piano-models",
+        action="store_true",
+        help="Render every published MAESTRO recording-domain embedding",
+    )
     parser.add_argument("--warm-up-seconds", type=float, default=0.5)
     parser.add_argument("--tail-seconds", type=float, default=2.5)
     parser.add_argument("--chunk-seconds", type=float, default=4.0)
@@ -159,13 +164,11 @@ def main() -> int:
     renderer = ROOT / "scripts" / "render_onnx.py"
     for model_path, metadata in compatible:
         piano_models = metadata["piano_model_index_to_maestro_year"]
-        piano_model = min(args.piano_model, len(piano_models) - 1)
         model_id = model_output_label(model_path, metadata)
         output_label = model_id
         if output_label in used_output_labels:
             output_label = f"{model_id}-{model_path.stem}"
         used_output_labels.add(output_label)
-        output_dir = run_dir / output_label
         entry: dict[str, object] = {
             "model": str(model_path),
             "model_sha256": _model_sha256(model_path),
@@ -173,41 +176,66 @@ def main() -> int:
             "architecture": metadata.get("architecture"),
             "model_id": model_id,
             "output_label": output_label,
-            "training_phase": metadata.get("training_phase"),
-            "piano_model": piano_model,
-            "maestro_year": piano_models[piano_model],
-            "output_directory": str(output_dir),
+            "training_stage": metadata.get("training_stage"),
+            "detune_enabled": metadata.get("detune_enabled"),
+            "renders": [],
             "status": "running",
         }
         index["models"].append(entry)
         _write_index(index_path, index)
-        command = [
-            sys.executable,
-            str(renderer),
-            "--model",
-            str(model_path),
-            "--midi-dir",
-            str(midi_dir),
-            "--output-dir",
-            str(output_dir),
-            "--piano-model",
-            str(piano_model),
-            "--warm-up-seconds",
-            str(args.warm_up_seconds),
-            "--tail-seconds",
-            str(args.tail_seconds),
-            "--chunk-seconds",
-            str(args.chunk_seconds),
-        ]
-        try:
-            subprocess.run(command, cwd=ROOT, check=True)
-            manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
-            entry["wav_files"] = len(manifest["files"])
-            entry["status"] = "complete"
-        except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
-            entry["status"] = "failed"
-            entry["error"] = str(error)
-            failures += 1
+        piano_model_indices = (
+            range(len(piano_models))
+            if args.all_piano_models
+            else [min(args.piano_model, len(piano_models) - 1)]
+        )
+        model_failed = False
+        for piano_model in piano_model_indices:
+            maestro_year = piano_models[piano_model]
+            output_dir = (
+                run_dir
+                / output_label
+                / f"timbre_{piano_model:02d}_maestro_{maestro_year}"
+            )
+            render_entry: dict[str, object] = {
+                "piano_model": piano_model,
+                "maestro_year": maestro_year,
+                "output_directory": str(output_dir),
+                "status": "running",
+            }
+            entry["renders"].append(render_entry)
+            _write_index(index_path, index)
+            command = [
+                sys.executable,
+                str(renderer),
+                "--model",
+                str(model_path),
+                "--midi-dir",
+                str(midi_dir),
+                "--output-dir",
+                str(output_dir),
+                "--piano-model",
+                str(piano_model),
+                "--warm-up-seconds",
+                str(args.warm_up_seconds),
+                "--tail-seconds",
+                str(args.tail_seconds),
+                "--chunk-seconds",
+                str(args.chunk_seconds),
+            ]
+            try:
+                subprocess.run(command, cwd=ROOT, check=True)
+                manifest = json.loads(
+                    (output_dir / "manifest.json").read_text(encoding="utf-8")
+                )
+                render_entry["wav_files"] = len(manifest["files"])
+                render_entry["status"] = "complete"
+            except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
+                render_entry["status"] = "failed"
+                render_entry["error"] = str(error)
+                model_failed = True
+                failures += 1
+            _write_index(index_path, index)
+        entry["status"] = "failed" if model_failed else "complete"
         _write_index(index_path, index)
 
     index["status"] = "complete" if failures == 0 else "partial_failure"

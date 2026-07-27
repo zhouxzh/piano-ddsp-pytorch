@@ -175,7 +175,7 @@ let state=JSON.parse(localStorage.getItem(key)||'{{"index":0,"answers":{{}}}}');
 const root=document.getElementById('trial'), progress=document.getElementById('progress');
 document.getElementById('deadline').textContent=deadline?'截止 '+new Date(deadline).toLocaleString():'等待全部训练完成后开启';
 function esc(value) {{ const el=document.createElement('span'); el.textContent=value; return el.innerHTML; }}
-function emptyAnswer() {{ const ratings={{}}; dimensions.forEach(d=>ratings[d]={{A:3,B:3}}); return {{preference:null,ratings,severe_artifact:{{A:false,B:false}},notes:''}}; }}
+function emptyAnswer() {{ const ratings={{}},rating_touched={{}}; dimensions.forEach(d=>{{ratings[d]={{A:3,B:3}};rating_touched[d]={{A:false,B:false}};}}); return {{preference:null,ratings,rating_touched,severe_artifact:{{A:false,B:false}},notes:''}}; }}
 function save() {{ localStorage.setItem(key,JSON.stringify(state)); }}
 function render() {{
   const t=trials[state.index], a=state.answers[t.id]||emptyAnswer(); state.answers[t.id]=a;
@@ -184,7 +184,7 @@ function render() {{
   const rows=dimensions.map(d=>`<strong>${{labels[d]}}</strong>${{control(d,'A')}}${{control(d,'B')}}`).join('');
   root.innerHTML=`<div class="meta"><strong>${{esc(t.title)}}</strong><span class="mode">${{t.mode==='fixed_gain'?'固定增益':'响度匹配'}}</span></div><div class="players"><div class="player"><h2>A</h2><audio controls preload="metadata" src="${{t.a}}"></audio></div><div class="player"><h2>B</h2><audio controls preload="metadata" src="${{t.b}}"></audio></div></div><div class="preference"><button data-pref="A" aria-pressed="${{a.preference==='A'}}">A</button><button data-pref="tie" aria-pressed="${{a.preference==='tie'}}">平局</button><button data-pref="B" aria-pressed="${{a.preference==='B'}}">B</button></div><div class="ratings"><span></span><strong>A</strong><strong>B</strong>${{rows}}</div><div class="flags"><label><input data-flag="A" type="checkbox" ${{a.severe_artifact.A?'checked':''}}> A 严重缺陷</label><label><input data-flag="B" type="checkbox" ${{a.severe_artifact.B?'checked':''}}> B 严重缺陷</label></div><textarea placeholder="备注">${{esc(a.notes)}}</textarea><div class="actions"><button id="previous" ${{state.index===0?'disabled':''}}>上一项</button><button class="primary" id="next">${{state.index===trials.length-1?'导出评分':'下一项'}}</button></div>`;
   root.querySelectorAll('[data-pref]').forEach(el=>el.onclick=()=>{{a.preference=el.dataset.pref;save();render();}});
-  root.querySelectorAll('input[type=range]').forEach(el=>el.oninput=()=>{{a.ratings[el.dataset.d][el.dataset.side]=Number(el.value);el.nextElementSibling.value=el.value;save();}});
+  root.querySelectorAll('input[type=range]').forEach(el=>el.oninput=()=>{{a.ratings[el.dataset.d][el.dataset.side]=Number(el.value);a.rating_touched=a.rating_touched||{{}};a.rating_touched[el.dataset.d]=a.rating_touched[el.dataset.d]||{{A:false,B:false}};a.rating_touched[el.dataset.d][el.dataset.side]=true;el.nextElementSibling.value=el.value;save();}});
   root.querySelectorAll('[data-flag]').forEach(el=>el.onchange=()=>{{a.severe_artifact[el.dataset.flag]=el.checked;save();}});
   root.querySelector('textarea').oninput=e=>{{a.notes=e.target.value;save();}};
   root.querySelector('#previous').onclick=()=>{{state.index=Math.max(0,state.index-1);save();render();}};
@@ -382,19 +382,29 @@ def finalize_review(report_dir: Path, scores_path: Path, config: dict) -> dict:
             ratings = entry["ratings"][dimension]
             candidate_side = "A" if trial_map["A"] == "candidate" else "B"
             baseline_side = "B" if candidate_side == "A" else "A"
-            dimension_deltas[dimension].append(
-                float(ratings[candidate_side]) - float(ratings[baseline_side])
-            )
+            touched = entry.get("rating_touched")
+            if touched is None or (
+                bool(touched.get(dimension, {}).get(candidate_side))
+                and bool(touched.get(dimension, {}).get(baseline_side))
+            ):
+                dimension_deltas[dimension].append(
+                    float(ratings[candidate_side]) - float(ratings[baseline_side])
+                )
         candidate_side = "A" if trial_map["A"] == "candidate" else "B"
         repeated_artifacts += int(bool(entry["severe_artifact"][candidate_side]))
 
     preference_rate = points / len(expected)
     mean_deltas = {
-        name: float(np.mean(values)) for name, values in dimension_deltas.items()
+        name: float(np.mean(values)) if values else None
+        for name, values in dimension_deltas.items()
     }
+    rated_deltas = [value for value in mean_deltas.values() if value is not None]
+    dimensions_passed = not rated_deltas or min(rated_deltas) >= -float(
+        config["gates"]["human_dimension_regression"]
+    )
     human_passed = (
         preference_rate >= float(config["gates"]["human_preference_rate"])
-        and min(mean_deltas.values()) >= -float(config["gates"]["human_dimension_regression"])
+        and dimensions_passed
         and repeated_artifacts < int(config["gates"]["human_repeated_artifacts"])
     )
     destination = report_dir / "listening" / "listening_scores.json"
@@ -410,6 +420,9 @@ def finalize_review(report_dir: Path, scores_path: Path, config: dict) -> dict:
             ),
             "preference_rate": preference_rate,
             "dimension_mean_delta": mean_deltas,
+            "dimension_rating_counts": {
+                name: len(values) for name, values in dimension_deltas.items()
+            },
             "candidate_severe_artifacts": repeated_artifacts,
         }
     )

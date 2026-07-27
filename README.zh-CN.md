@@ -67,6 +67,15 @@ python train.py \
 `ddsp_piano/model-suite-v1.0.0.json`。`--epochs`、`--steps-per-epoch`、`--batch-size`、
 `--lr` 和 `--seed` 可显式覆盖；checkpoint 会保存最终有效配置。
 
+质量优先完整重训使用独立候选注册表，不修改稳定版本：
+
+```bash
+python scripts/train_model_suite.py
+```
+
+该流水线执行 `controls -> pitch -> refine` 三阶段训练，保证全数据覆盖并保留十个 MAESTRO 音色域。
+实时状态见 `runs/model-suite-v1.1.0-rc1/pipeline-state.json`。
+
 单个模型导出：
 
 ```bash
@@ -92,6 +101,7 @@ python scripts/export_onnx.py \
 - [模型与发布附件](docs/models.md)
 - [GitHub 与 Hugging Face 发布流程](docs/publishing.md)
 - [训练与 ONNX 导出](docs/training-and-export.md)
+- [v1.1 质量优先重训方案](docs/training-v1.1.md)
 - [标准评测与本地 MIDI 测试集](docs/evaluation.md)
 - [实时网页播放器](docs/realtime.md)
 - [Ascend 310B 交接合同](docs/ascend-310b.md)
