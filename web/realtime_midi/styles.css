@@ -248,6 +248,13 @@ input:disabled {
   overflow-wrap: anywhere;
 }
 
+.model-select-field {
+  grid-template-columns: auto minmax(180px, 260px);
+  align-items: center;
+  font-family: inherit;
+  text-align: left;
+}
+
 .model-readout span:last-child {
   color: var(--muted);
   font-size: 11px;

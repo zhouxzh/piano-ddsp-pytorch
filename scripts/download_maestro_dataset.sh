@@ -21,9 +21,6 @@ export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-120}"
 
 if [[ -z "${HF_BIN:-}" ]]; then
-  HF_BIN="/home/zhong/anaconda3/envs/torch/bin/hf"
-fi
-if [[ ! -x "${HF_BIN}" ]]; then
   HF_BIN="$(command -v hf 2>/dev/null || true)"
 fi
 if [[ -z "${HF_BIN}" || ! -x "${HF_BIN}" ]]; then

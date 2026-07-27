@@ -39,8 +39,7 @@ MIDI events
   -> continuous audio output
 ```
 
-- Use the pinned Ascend example repository at
-  `references/ascend-cann-samples` and the project's documented successful
+- Use the upstream Ascend CANN samples and the project's documented successful
   DDSP-VST-to-OM case as implementation references. Reuse applicable CANN,
   device-memory, model-loading, execution, and audio integration patterns, but
   do not assume that a reference model's successful conversion proves that a

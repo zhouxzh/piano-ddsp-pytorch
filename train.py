@@ -15,10 +15,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, Subset
 
-from ddsp_piano.default_model import get_model, get_v2_model
+from ddsp_piano.default_model import build_configurable_model, build_paper_model
 from ddsp_piano.evaluation import build_corpus
 from ddsp_piano.maestro import MaestroSegmentDataset, PreprocessConfig, prepare_split
 from ddsp_piano.modules.loss import HybridLoss
+from ddsp_piano.model_registry import load_model_registry
 from ddsp_piano.training_quality import (
     MixedCurriculumSampler,
     build_quality_manifest,
@@ -33,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--maestro-root", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path, default=Path("cache"))
     parser.add_argument("--experiment-dir", type=Path, default=Path("runs/piano_16k"))
-    parser.add_argument("--model-variant", choices=("current", "v2"), default="current")
+    parser.add_argument("--model-id", default="paper_ir")
     parser.add_argument("--prepare", action="store_true", help="Build missing track caches before training")
     parser.add_argument("--prepare-only", action="store_true", help="Build caches then exit")
     parser.add_argument("--prepare-splits", default="train,validation")
@@ -44,9 +45,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--segment-seconds", type=float, default=3.0)
     parser.add_argument("--overlap", type=float, default=0.5)
     parser.add_argument("--max-polyphony", type=int, default=16)
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--steps-per-epoch", type=int, default=0, help="0 uses every cached segment")
+    parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--epochs", type=int)
+    parser.add_argument("--steps-per-epoch", type=int, help="0 uses every cached segment")
     parser.add_argument("--validation-batches", type=int, default=16)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument(
@@ -65,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Validate every N epochs; 0 validates only at the end of this invocation",
     )
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float)
     parser.add_argument("--phase", choices=(1, 2), type=int, default=1)
     parser.add_argument("--device", default="auto", help="auto, cuda, cuda:N, or cpu")
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
@@ -157,7 +158,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Partially initialize matching weights and reset optimizer/step state",
     )
-    parser.add_argument("--seed", type=int, default=20260720)
+    parser.add_argument("--seed", type=int)
     return parser.parse_args()
 
 
@@ -658,6 +659,17 @@ def save_checkpoint(
 
 def main() -> int:
     args = parse_args()
+    registry = load_model_registry()
+    model_spec = registry.require(args.model_id)
+    args.architecture = model_spec.architecture
+    for name, value in model_spec.model.items():
+        setattr(args, name, value)
+    training_names = {"learning_rate": "lr"}
+    operational = {"lr", "epochs", "steps_per_epoch", "batch_size", "seed"}
+    for name, value in model_spec.training.items():
+        destination = training_names.get(name, name)
+        if destination not in operational or getattr(args, destination, None) is None:
+            setattr(args, destination, value)
     initialization_options = [
         args.resume is not None,
         args.weights is not None,
@@ -668,16 +680,6 @@ def main() -> int:
         raise ValueError(
             "--resume, --weights, --init-checkpoint, and --finetune-from are mutually exclusive"
         )
-    if args.n_harmonics is None:
-        args.n_harmonics = 128 if args.model_variant == "v2" else 96
-    if args.n_noise_bands is None:
-        args.n_noise_bands = 96 if args.model_variant == "v2" else 64
-    if args.reverb_type == "auto":
-        args.reverb_type = "fdn" if args.model_variant == "v2" else "ir"
-    if args.model_variant == "current":
-        args.context_type = "legacy"
-        args.monophonic_type = "legacy"
-        args.inharmonicity_type = "legacy"
     if args.n_harmonics <= 0 or args.n_noise_bands <= 0:
         raise ValueError("--n-harmonics and --n-noise-bands must be positive")
     if min(
@@ -716,13 +718,13 @@ def main() -> int:
         raise ValueError("--reverb-wet-gain must be non-negative")
     if args.loss_version == "perceptual_v2" and args.dry_loss_weight:
         print("perceptual_v2 ignores --dry-loss-weight", flush=True)
-    if args.model_variant == "current" and (
+    if args.architecture == "paper" and (
         args.n_harmonics != 96
         or args.n_noise_bands != 64
         or args.reverb_type != "ir"
     ):
         raise ValueError(
-            "The v1/current architecture requires 96 harmonics, 64 noise bands, and IR reverb"
+            "The paper architecture requires 96 harmonics, 64 noise bands, and IR reverb"
         )
     config = config_from_args(args)
     device = select_device(args.device)
@@ -809,7 +811,11 @@ def main() -> int:
         shuffle=False,
         worker_count=args.validation_workers,
     )
-    model_builder = get_v2_model if args.model_variant == "v2" else get_model
+    model_builder = (
+        build_configurable_model
+        if args.architecture == "configurable"
+        else build_paper_model
+    )
     model_kwargs = dict(
         n_synths=config.max_polyphony,
         n_piano_models=len(train_dataset.piano_models),
@@ -819,7 +825,7 @@ def main() -> int:
         reverb_wet_gain=args.reverb_wet_gain,
         synthesis_layout=args.synthesis_layout,
     )
-    if args.model_variant == "v2":
+    if args.architecture == "configurable":
         model_kwargs.update(
             n_harmonics=args.n_harmonics,
             n_noise_filter_banks=args.n_noise_bands,

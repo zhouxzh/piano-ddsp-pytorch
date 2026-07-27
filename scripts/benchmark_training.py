@@ -17,14 +17,15 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from ddsp_piano.default_model import get_model, get_v2_model
+from ddsp_piano.default_model import build_configurable_model, build_paper_model
 from ddsp_piano.modules.loss import HybridLoss
+from ddsp_piano.model_registry import load_model_registry
 from train import velocity_counterfactual_loss
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--architecture", choices=("v1", "v2a", "v2b"), default="v2a")
+    parser.add_argument("--model-id", default="calibrated_ir")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--segment-seconds", type=float, default=3.0)
@@ -39,46 +40,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--velocity-loss-every", type=int, default=4)
     parser.add_argument("--spectral-layout", choices=("separate", "combined"), default="combined")
     parser.add_argument("--velocity-counterfactual-layout", choices=("separate", "combined"), default="combined")
-    parser.add_argument("--freeze-reverb", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--freeze-reverb", action=argparse.BooleanOptionalAction)
     parser.add_argument("--seed", type=int, default=20260725)
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
 
 def build_model(args: argparse.Namespace, device: torch.device) -> torch.nn.Module:
+    spec = load_model_registry().require(args.model_id)
+    model_config = spec.model
     common = {
         "n_synths": args.polyphony,
         "n_piano_models": 10,
         "duration": args.segment_seconds,
         "frame_rate": 250,
         "sample_rate": 16_000,
-        "reverb_wet_gain": 1.0,
+        "reverb_wet_gain": float(model_config["reverb_wet_gain"]),
         "synthesis_layout": args.synthesis_layout,
     }
-    if args.architecture == "v1":
-        model = get_model(**common)
-    elif args.architecture == "v2a":
-        model = get_v2_model(
-            **common,
-            n_harmonics=96,
-            n_noise_filter_banks=64,
-            reverb_type="ir",
-            context_type="legacy",
-            monophonic_type="legacy",
-            inharmonicity_type="legacy",
-        )
+    if spec.architecture == "paper":
+        model = build_paper_model(**common)
     else:
-        model = get_v2_model(
+        model = build_configurable_model(
             **common,
-            n_harmonics=96,
-            n_noise_filter_banks=64,
-            reverb_type="ir",
-            context_type="film",
-            monophonic_type="deep",
-            inharmonicity_type="joint",
+            n_harmonics=int(model_config["n_harmonics"]),
+            n_noise_filter_banks=int(model_config["n_noise_bands"]),
+            reverb_type=str(model_config["reverb_type"]),
+            context_type=str(model_config["context_type"]),
+            monophonic_type=str(model_config["monophonic_type"]),
+            inharmonicity_type=str(model_config["inharmonicity_type"]),
         )
     model.alternate_training(first_phase=True)
-    if args.freeze_reverb:
+    freeze_reverb = (
+        bool(spec.training.get("freeze_reverb", False))
+        if args.freeze_reverb is None
+        else args.freeze_reverb
+    )
+    if freeze_reverb:
         for parameter in model.reverb_model.parameters():
             parameter.requires_grad = False
     return model.to(device)
@@ -114,6 +112,7 @@ def synchronize(device: torch.device) -> None:
 
 def main() -> int:
     args = parse_args()
+    spec = load_model_registry().require(args.model_id)
     if args.batch_size <= 0 or args.warmup_steps < 0 or args.timed_steps <= 0:
         raise ValueError("batch and step counts must be positive")
     device = torch.device(args.device)
@@ -143,14 +142,14 @@ def main() -> int:
         [2048, 1024, 512, 256, 128, 64],
         model.inharm_model,
         phase=True,
-        weight=0.01,
-        dry_weight=0.0,
-        wet_weight=0.75,
-        reverb_mode="ir",
-        energy_weight=0.1,
-        onset_weight=0.1,
+        weight=float(spec.training.get("reverb_regularizer_weight", 0.05)),
+        dry_weight=float(spec.training.get("dry_loss_weight", 0.7)),
+        wet_weight=float(spec.training.get("wet_loss_weight", 0.3)),
+        reverb_mode=str(spec.model["reverb_type"]),
+        energy_weight=float(spec.training.get("energy_loss_weight", 0.0)),
+        onset_weight=float(spec.training.get("onset_loss_weight", 0.0)),
         sample_rate=16_000,
-        loss_version="perceptual_v2",
+        loss_version=str(spec.training.get("loss_version", "legacy")),
         spectral_layout=args.spectral_layout,
     ).to(device)
     audio, conditioning, pedal, piano_model = synthetic_batch(args, device)
@@ -203,7 +202,8 @@ def main() -> int:
     report = {
         "schema": "ddsp-piano-training-benchmark/v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "architecture": args.architecture,
+        "model_id": args.model_id,
+        "architecture": spec.architecture,
         "device": str(device),
         "device_name": device_name,
         "torch_version": torch.__version__,

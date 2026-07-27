@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare, run, and finalize the DDSP-Piano quality-v1 evaluation suite."""
+"""Prepare, run, and finalize the DDSP-Piano model-suite evaluation."""
 
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ from ddsp_piano.listening import (
     select_excerpt_frames,
 )
 from ddsp_piano.maestro import PreprocessConfig, load_midi_conditioning, prepare_split
+from ddsp_piano.model_registry import load_model_registry
 from scripts.render_onnx import (
     _render_streaming_conditioning,
     _shape,
@@ -47,7 +48,7 @@ from scripts.render_onnx import (
 )
 
 
-DEFAULT_CONFIG = ROOT / "configs" / "evaluation_v1.json"
+DEFAULT_CONFIG = ROOT / "configs" / "evaluation.json"
 
 
 def _implementation_hashes() -> dict[str, str]:
@@ -385,8 +386,11 @@ def prepare_command(args: argparse.Namespace, config: dict) -> int:
 
 
 def run_command(args: argparse.Namespace, config: dict) -> int:
-    baseline_path = args.baseline.resolve()
-    candidate_path = args.candidate.resolve()
+    registry = load_model_registry()
+    baseline_spec = registry.require(args.baseline_id)
+    candidate_spec = registry.require(args.candidate_id)
+    baseline_path = baseline_spec.asset_path(args.artifacts_dir, ".onnx").resolve()
+    candidate_path = candidate_spec.asset_path(args.artifacts_dir, ".onnx").resolve()
     corpus_path = args.corpus or _default_corpus_path(config, args.profile)
     if not corpus_path.is_file():
         raise FileNotFoundError(
@@ -650,8 +654,13 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--prepare-missing", action="store_true")
 
     run = commands.add_parser("run", help="Evaluate one ONNX candidate against a baseline")
-    run.add_argument("--baseline", type=Path, required=True)
-    run.add_argument("--candidate", type=Path, required=True)
+    run.add_argument("--baseline-id", default="paper_ir")
+    run.add_argument("--candidate-id", required=True)
+    run.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        default=ROOT / "artifacts" / "model-suite-v1.0.0",
+    )
     run.add_argument("--profile", choices=("quick", "dev", "release"), default="dev")
     run.add_argument("--corpus", type=Path)
     run.add_argument("--output-dir", type=Path)

@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 
 from ddsp_piano.ddsp_pytorch.noise import Noise
-from ddsp_piano.default_model import get_model, get_v2_model
+from ddsp_piano.default_model import build_configurable_model, build_paper_model
 from ddsp_piano.modules.inharm_synth import MultiInharmonic
 from ddsp_piano.modules.loss import SSSLoss
 from ddsp_piano.modules.piano_model import PianoModel
@@ -105,8 +105,8 @@ class TrainingOptimizationTest(unittest.TestCase):
             "synthesis_layout": "vectorized",
         }
         models = [
-            get_model(**common),
-            get_v2_model(
+            build_paper_model(**common),
+            build_configurable_model(
                 **common,
                 n_harmonics=96,
                 n_noise_filter_banks=64,
@@ -115,7 +115,7 @@ class TrainingOptimizationTest(unittest.TestCase):
                 monophonic_type="legacy",
                 inharmonicity_type="legacy",
             ),
-            get_v2_model(
+            build_configurable_model(
                 **common,
                 n_harmonics=96,
                 n_noise_filter_banks=64,
@@ -265,13 +265,13 @@ class TrainingOptimizationTest(unittest.TestCase):
             "monophonic_type": "legacy",
             "inharmonicity_type": "legacy",
         }
-        controls = get_v2_model(**common)
+        controls = build_configurable_model(**common)
         controls.alternate_training(first_phase=True)
         set_trainable_scope(controls, "controls", phase=1)
         self.assertFalse(any(p.requires_grad for p in controls.reverb_model.parameters()))
         self.assertTrue(any(p.requires_grad for p in controls.monophonic_network.parameters()))
 
-        reverb = get_v2_model(**common)
+        reverb = build_configurable_model(**common)
         reverb.alternate_training(first_phase=True)
         set_trainable_scope(reverb, "reverb", phase=1)
         trainable = {

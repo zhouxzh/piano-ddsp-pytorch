@@ -1,0 +1,151 @@
+{
+  "schema": "ddsp-piano-model-suite/v1",
+  "release": "model-suite-v1.0.0",
+  "deployment_contract": {
+    "dtype": "FP32",
+    "opset": 13,
+    "batch_size": 1,
+    "frames_per_call": 1,
+    "frame_rate": 250,
+    "sample_rate": 16000,
+    "audio_samples_per_call": 64,
+    "max_polyphony": 16,
+    "release_frames": 250,
+    "dsp_location": "host"
+  },
+  "legacy_names": {
+    "v1": "paper_ir",
+    "piano_v1": "paper_ir",
+    "current": "paper_ir",
+    "v2": "film_fdn",
+    "piano_v2": "film_fdn",
+    "v2a": "calibrated_ir",
+    "v2a_calibrated_v1": "calibrated_ir",
+    "v2b": "calibrated_film_ir",
+    "v2b_full_ir_96_64": "calibrated_film_ir"
+  },
+  "models": {
+    "paper_ir": {
+      "display_name": "Paper IR",
+      "description": "Locally trained PyTorch implementation of the DAFx22 DDSP-Piano architecture.",
+      "asset_basename": "ddsp_piano_paper_ir",
+      "architecture": "paper",
+      "lineage": "lrenault/ddsp-piano ddsp_piano/configs/dafx22.gin",
+      "quality_status": "quality_selection_pending",
+      "model": {
+        "n_harmonics": 96,
+        "n_noise_bands": 64,
+        "reverb_type": "ir",
+        "reverb_wet_gain": 0.25,
+        "context_type": "legacy",
+        "monophonic_type": "legacy",
+        "inharmonicity_type": "legacy"
+      },
+      "training": {
+        "loss_version": "legacy",
+        "dry_loss_weight": 0.7,
+        "wet_loss_weight": 0.3,
+        "reverb_regularizer_weight": 0.05,
+        "learning_rate": 0.001,
+        "epochs": 20,
+        "steps_per_epoch": 2000,
+        "batch_size": 1,
+        "seed": 20260720
+      }
+    },
+    "film_fdn": {
+      "display_name": "FiLM FDN",
+      "description": "Locally trained PyTorch implementation of the later MAESTRO v2 DDSP-Piano architecture.",
+      "asset_basename": "ddsp_piano_film_fdn",
+      "architecture": "configurable",
+      "lineage": "lrenault/ddsp-piano ddsp_piano/configs/maestro-v2.gin",
+      "quality_status": "quality_selection_pending",
+      "model": {
+        "n_harmonics": 128,
+        "n_noise_bands": 96,
+        "reverb_type": "fdn",
+        "reverb_wet_gain": 0.25,
+        "context_type": "film",
+        "monophonic_type": "deep",
+        "inharmonicity_type": "joint"
+      },
+      "training": {
+        "loss_version": "legacy",
+        "dry_loss_weight": 0.7,
+        "wet_loss_weight": 0.3,
+        "reverb_regularizer_weight": 0.05,
+        "learning_rate": 0.001,
+        "epochs": 20,
+        "steps_per_epoch": 2000,
+        "batch_size": 1,
+        "seed": 20260720
+      }
+    },
+    "calibrated_ir": {
+      "display_name": "Calibrated IR",
+      "description": "Legacy control networks calibrated with the perceptual loss and a full-wet learned IR.",
+      "asset_basename": "ddsp_piano_calibrated_ir",
+      "architecture": "configurable",
+      "lineage": "paper_ir initialized, perceptual calibration route",
+      "quality_status": "quality_selection_pending",
+      "model": {
+        "n_harmonics": 96,
+        "n_noise_bands": 64,
+        "reverb_type": "ir",
+        "reverb_wet_gain": 1.0,
+        "context_type": "legacy",
+        "monophonic_type": "legacy",
+        "inharmonicity_type": "legacy"
+      },
+      "training": {
+        "loss_version": "perceptual_v2",
+        "dry_loss_weight": 0.0,
+        "wet_loss_weight": 0.75,
+        "reverb_regularizer_weight": 0.01,
+        "energy_loss_weight": 0.1,
+        "onset_loss_weight": 0.1,
+        "velocity_loss_weight": 0.05,
+        "loss_calibration_batches": 512,
+        "freeze_reverb": true,
+        "learning_rate": 0.0003,
+        "epochs": 20,
+        "steps_per_epoch": 2000,
+        "batch_size": 1,
+        "seed": 20260724
+      }
+    },
+    "calibrated_film_ir": {
+      "display_name": "Calibrated FiLM IR",
+      "description": "FiLM, deep monophonic, and joint inharmonicity networks calibrated with the perceptual loss and learned IR.",
+      "asset_basename": "ddsp_piano_calibrated_film_ir",
+      "architecture": "configurable",
+      "lineage": "MAESTRO v2 structure modified for 96/64 learned-IR synthesis",
+      "quality_status": "quality_selection_pending",
+      "model": {
+        "n_harmonics": 96,
+        "n_noise_bands": 64,
+        "reverb_type": "ir",
+        "reverb_wet_gain": 1.0,
+        "context_type": "film",
+        "monophonic_type": "deep",
+        "inharmonicity_type": "joint"
+      },
+      "training": {
+        "loss_version": "perceptual_v2",
+        "dry_loss_weight": 0.0,
+        "wet_loss_weight": 0.75,
+        "reverb_regularizer_weight": 0.01,
+        "energy_loss_weight": 0.1,
+        "onset_loss_weight": 0.1,
+        "velocity_loss_weight": 0.05,
+        "loss_calibration_batches": 512,
+        "freeze_reverb": false,
+        "learning_rate": 0.0003,
+        "epochs": 20,
+        "steps_per_epoch": 2000,
+        "batch_size": 1,
+        "seed": 20260724
+      }
+    }
+  }
+}

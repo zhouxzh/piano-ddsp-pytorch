@@ -8,7 +8,7 @@ import torch
 import tempfile
 from pathlib import Path
 
-from ddsp_piano.default_model import get_model, get_v2_model
+from ddsp_piano.default_model import build_configurable_model, build_paper_model
 from train import load_partial_initialization
 from ddsp_piano.ddsp_pytorch.fdn import fdn_impulse_response
 from ddsp_piano.ddsp_pytorch.reverb import Reverb
@@ -114,7 +114,7 @@ class DeploymentTest(unittest.TestCase):
         torch.testing.assert_close(first, repeated)
 
     def test_inference_reverb_applies_midi_ddsp_decay(self) -> None:
-        model = get_model(
+        model = build_paper_model(
             inference=True,
             n_synths=1,
             n_piano_models=1,
@@ -129,7 +129,7 @@ class DeploymentTest(unittest.TestCase):
 
     def test_realtime_control_contract(self) -> None:
         polyphony = 16
-        model = get_model(
+        model = build_paper_model(
             n_synths=polyphony,
             n_piano_models=1,
             duration=1 / 250,
@@ -162,8 +162,8 @@ class DeploymentTest(unittest.TestCase):
             ],
         )
 
-    def test_v2_control_contract_uses_deep_outputs_and_fdn_controls(self) -> None:
-        model = get_v2_model(
+    def test_film_fdn_contract_uses_deep_outputs_and_fdn_controls(self) -> None:
+        model = build_configurable_model(
             n_synths=16,
             n_piano_models=1,
             duration=1 / 250,
@@ -186,8 +186,8 @@ class DeploymentTest(unittest.TestCase):
         self.assertEqual(tuple(outputs[5].shape), (1, 9))
         self.assertTrue(torch.isfinite(outputs[5]).all())
 
-    def test_v2_ir_ablation_keeps_configured_control_dimensions(self) -> None:
-        model = get_v2_model(
+    def test_configurable_ir_keeps_configured_control_dimensions(self) -> None:
+        model = build_configurable_model(
             n_synths=2,
             n_piano_models=1,
             duration=1 / 250,
@@ -212,7 +212,7 @@ class DeploymentTest(unittest.TestCase):
         self.assertEqual(tuple(outputs[4].shape), (1, 1, 2, 64))
         self.assertEqual(tuple(outputs[5].shape), (1, 24_000))
 
-    def test_v2a_residual_film_is_identity_after_v1_initialization(self) -> None:
+    def test_residual_film_is_identity_after_paper_initialization(self) -> None:
         kwargs = {
             "n_synths": 16,
             "n_piano_models": 1,
@@ -222,8 +222,8 @@ class DeploymentTest(unittest.TestCase):
             "reverb_wet_gain": 1.0,
         }
         torch.manual_seed(7)
-        v1 = get_model(**kwargs).eval()
-        v2a = get_v2_model(
+        paper_model = build_paper_model(**kwargs).eval()
+        residual_model = build_configurable_model(
             **kwargs,
             n_harmonics=96,
             n_noise_filter_banks=64,
@@ -233,9 +233,11 @@ class DeploymentTest(unittest.TestCase):
             inharmonicity_type="legacy",
         ).eval()
         with tempfile.TemporaryDirectory() as temporary:
-            checkpoint = Path(temporary) / "v1.pt"
-            torch.save({"model": v1.state_dict()}, checkpoint)
-            report = load_partial_initialization(v2a, checkpoint, torch.device("cpu"))
+            checkpoint = Path(temporary) / "paper.pt"
+            torch.save({"model": paper_model.state_dict()}, checkpoint)
+            report = load_partial_initialization(
+                residual_model, checkpoint, torch.device("cpu")
+            )
         self.assertGreater(report["loaded_tensors"], 0)
         inputs = (
             torch.cat(
@@ -255,9 +257,9 @@ class DeploymentTest(unittest.TestCase):
             torch.zeros(1, 16, 192),
         )
         with torch.inference_mode():
-            v1_outputs = PianoRealtimeControlModel(v1)(*inputs)
-            v2a_outputs = PianoRealtimeControlModel(v2a)(*inputs)
-        for expected, actual in zip(v1_outputs, v2a_outputs):
+            paper_outputs = PianoRealtimeControlModel(paper_model)(*inputs)
+            residual_outputs = PianoRealtimeControlModel(residual_model)(*inputs)
+        for expected, actual in zip(paper_outputs, residual_outputs):
             torch.testing.assert_close(actual, expected, rtol=0.0, atol=0.0)
 
     def test_fdn_controls_are_bounded_and_renderable(self) -> None:
@@ -270,7 +272,7 @@ class DeploymentTest(unittest.TestCase):
         self.assertGreater(float(wet_mix), 0.0)
         self.assertLess(float(wet_mix), 1.0)
 
-    def test_current_reverb_wet_gain_is_explicit(self) -> None:
+    def test_paper_reverb_wet_gain_is_explicit(self) -> None:
         audio = torch.zeros(1, 32)
         audio[:, 0] = 1.0
         impulse = torch.zeros(1, 32)

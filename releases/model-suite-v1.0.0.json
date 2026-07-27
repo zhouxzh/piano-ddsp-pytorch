@@ -1,0 +1,110 @@
+{
+  "schema": "ddsp-piano-release/v1",
+  "release": "model-suite-v1.0.0",
+  "deployment_contract": {
+    "dtype": "FP32",
+    "opset": 13,
+    "batch_size": 1,
+    "frames_per_call": 1,
+    "frame_rate": 250,
+    "sample_rate": 16000,
+    "audio_samples_per_call": 64,
+    "max_polyphony": 16,
+    "release_frames": 250,
+    "dsp_location": "host"
+  },
+  "models": {
+    "paper_ir": {
+      "display_name": "Paper IR",
+      "architecture": "paper",
+      "lineage": "lrenault/ddsp-piano ddsp_piano/configs/dafx22.gin",
+      "quality_status": "quality_selection_pending",
+      "assets": {
+        "ddsp_piano_paper_ir.pt": {
+          "bytes": 6292013,
+          "sha256": "5fd4f9b8a89596becbfd614163fedf5b75c783bebe9510cd041fbd25f10f2431"
+        },
+        "ddsp_piano_paper_ir.onnx": {
+          "bytes": 2198921,
+          "sha256": "a29921a93c419a9bd3f4c5d4462522c47196ddc0d0fd4ef3525b92b2158457ae"
+        },
+        "ddsp_piano_paper_ir.json": {
+          "bytes": 4708,
+          "sha256": "2d94d8fcc5114d89630aed44f81a083cea41408f94c312f6082cf2e89a6c8b3a"
+        }
+      },
+      "source_checkpoint_sha256": "68581701744c20b4e790915dacc4bd6639c417342f18151755250eeb889b26b3",
+      "model_state_sha256": "a67d4b2997dcbb4fdb154d0c05a6689d7a395e67c8c0138acc27358143535e09",
+      "published_checkpoint_sha256": "5fd4f9b8a89596becbfd614163fedf5b75c783bebe9510cd041fbd25f10f2431"
+    },
+    "film_fdn": {
+      "display_name": "FiLM FDN",
+      "architecture": "configurable",
+      "lineage": "lrenault/ddsp-piano ddsp_piano/configs/maestro-v2.gin",
+      "quality_status": "quality_selection_pending",
+      "assets": {
+        "ddsp_piano_film_fdn.pt": {
+          "bytes": 4272184,
+          "sha256": "61928c3c95e03f0946ca1091c00d87b94d4a9ed1e57b5e5b4a8feea12551fd1f"
+        },
+        "ddsp_piano_film_fdn.onnx": {
+          "bytes": 1427834,
+          "sha256": "775450119a43d9f985f5012250c8fd04864af889aa6e094cccd01274594726ed"
+        },
+        "ddsp_piano_film_fdn.json": {
+          "bytes": 4811,
+          "sha256": "586c0f70976794ee2d2bf85bcffd5b2b61dec9952993bb77184bf2f4331dabc5"
+        }
+      },
+      "source_checkpoint_sha256": "fd0d60f2123ccd56fbc95e212e8ceb5a50f7c1a65eba317f69e70aabb9d9658b",
+      "model_state_sha256": "52e59e2f8bdffc8bd3d6b9a417d84d21b30fd41b6eefafc2418ba6dca5363b6b",
+      "published_checkpoint_sha256": "61928c3c95e03f0946ca1091c00d87b94d4a9ed1e57b5e5b4a8feea12551fd1f"
+    },
+    "calibrated_ir": {
+      "display_name": "Calibrated IR",
+      "architecture": "configurable",
+      "lineage": "paper_ir initialized, perceptual calibration route",
+      "quality_status": "quality_selection_pending",
+      "assets": {
+        "ddsp_piano_calibrated_ir.pt": {
+          "bytes": 4372684,
+          "sha256": "d3a0fab590cc29a0a948f898c2087d4a91a2de5a09f5cb7d583172b981804be7"
+        },
+        "ddsp_piano_calibrated_ir.onnx": {
+          "bytes": 2198921,
+          "sha256": "650c35e0399af2619b712926d611618790eb525fcdf00b7068e0a0c206e0a9d5"
+        },
+        "ddsp_piano_calibrated_ir.json": {
+          "bytes": 5426,
+          "sha256": "5b2ac31eb9a04e6892a6c3718a3225a2edc29b66c6cd8055b5bbbc3ece313998"
+        }
+      },
+      "source_checkpoint_sha256": "d32b6412a6dd93d32d8d091a9172a74d1a80e607b29da4f4f81a6e0bd066ea86",
+      "model_state_sha256": "35e3885e7a859953d704dbf8f789a5f6b1dadb9c120816c0ad00527254598414",
+      "published_checkpoint_sha256": "d3a0fab590cc29a0a948f898c2087d4a91a2de5a09f5cb7d583172b981804be7"
+    },
+    "calibrated_film_ir": {
+      "display_name": "Calibrated FiLM IR",
+      "architecture": "configurable",
+      "lineage": "MAESTRO v2 structure modified for 96/64 learned-IR synthesis",
+      "quality_status": "quality_selection_pending",
+      "assets": {
+        "ddsp_piano_calibrated_film_ir.pt": {
+          "bytes": 7124295,
+          "sha256": "971b4a847caef3a8c03950d6d3ca033ef0ae72040ff4a657fb5efe336ce37d0b"
+        },
+        "ddsp_piano_calibrated_film_ir.onnx": {
+          "bytes": 2466984,
+          "sha256": "3d217c9858df3d4146ea00d350ea695a192f79e6c237929be15fc3882d989d38"
+        },
+        "ddsp_piano_calibrated_film_ir.json": {
+          "bytes": 5528,
+          "sha256": "43f5e8f3fbcfd1cc689bc3a223ff6f228a59e2b6a9b4b7708d53e0cbaa35ccc5"
+        }
+      },
+      "source_checkpoint_sha256": "d328f72f954e35cb17efe68cc617014de99dfc6b1784127e881e5c6aa7e86582",
+      "model_state_sha256": "4d0bb25bee06fbdb2b39ada067dab6fe4924b75c06e93c01cdc19192f1a0981b",
+      "published_checkpoint_sha256": "971b4a847caef3a8c03950d6d3ca033ef0ae72040ff4a657fb5efe336ce37d0b"
+    }
+  }
+}

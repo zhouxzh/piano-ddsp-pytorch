@@ -30,7 +30,7 @@ from ddsp_piano.ddsp_pytorch.reverb import Reverb
 from ddsp_piano.deployment import extend_pitch_for_release
 from ddsp_piano.maestro import MidiConditioning, load_midi_conditioning
 from ddsp_piano.modules.inharm_synth import MultiInharmonic
-from ddsp_piano.versioning import model_output_label
+from ddsp_piano.model_registry import load_model_registry, model_output_label
 
 
 INPUT_NAMES = [
@@ -751,7 +751,13 @@ def main() -> int:
     parser.add_argument(
         "--model",
         type=Path,
-        default=Path("exports/piano_v1.onnx"),
+        help="Explicit ONNX path for a non-release diagnostic model",
+    )
+    parser.add_argument("--model-id", default="paper_ir")
+    parser.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        default=Path("artifacts/model-suite-v1.0.0"),
     )
     parser.add_argument(
         "--metadata",
@@ -808,8 +814,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    model_path = args.model.resolve()
-    metadata_path = (args.metadata or args.model.with_suffix(".json")).resolve()
+    if args.model is None:
+        model_spec = load_model_registry().require(args.model_id)
+        model_path = model_spec.asset_path(args.artifacts_dir, ".onnx").resolve()
+    else:
+        model_path = args.model.resolve()
+    metadata_path = (args.metadata or model_path.with_suffix(".json")).resolve()
     if not model_path.is_file():
         raise FileNotFoundError(f"ONNX model not found: {model_path}")
     if not metadata_path.is_file():
@@ -844,14 +854,14 @@ def main() -> int:
         if not midi_paths:
             raise FileNotFoundError(f"No .mid or .midi files found in: {midi_dir}")
         output_dir = (
-            args.output_dir or Path("exports/midi_tests") / output_label
+            args.output_dir or Path("artifacts/listening") / output_label
         ).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = output_dir / "manifest.json"
         manifest: dict[str, object] = {
             "model": str(model_path),
             "metadata": str(metadata_path),
-            "release_version": metadata.get("release_version", output_label),
+            "model_id": metadata.get("model_id", output_label),
             "midi_directory": str(midi_dir),
             "piano_model": args.piano_model,
             "maestro_year": piano_models[args.piano_model],
@@ -879,7 +889,7 @@ def main() -> int:
         midi_path = args.midi.resolve()
         output_path = (
             args.output
-            or Path("exports/midi_tests") / output_label / f"{midi_path.stem}.wav"
+            or Path("artifacts/listening") / output_label / f"{midi_path.stem}.wav"
         ).resolve()
         report = _render_midi_file(
             midi_path,
@@ -921,7 +931,9 @@ def main() -> int:
     warm_up_samples = warm_up_frames * samples_per_frame
     if warm_up_samples:
         signals = {name: value[warm_up_samples:] for name, value in signals.items()}
-    output_path = (args.output or Path("exports/piano_maestro_onnx_demo.wav")).resolve()
+    output_path = (
+        args.output or Path("artifacts/listening") / f"{output_label}-demo.wav"
+    ).resolve()
     report, stem_paths = _write_rendered_signals(
         output_path,
         signals,

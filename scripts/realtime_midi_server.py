@@ -29,12 +29,11 @@ from ddsp_piano.realtime import (
     load_midi_timeline,
     restore_midi_timeline_state,
 )
-from ddsp_piano.versioning import model_output_label
+from ddsp_piano.model_registry import load_model_registry
 
 
 WEB_ROOT = ROOT / "web" / "realtime_midi"
-DEFAULT_MODEL = ROOT / "exports" / "piano_v1.onnx"
-DEFAULT_METADATA = ROOT / "exports" / "piano_v1.json"
+DEFAULT_ARTIFACTS_DIR = ROOT / "artifacts" / "model-suite-v1.0.0"
 DEFAULT_MIDI_DIR = ROOT / "midi"
 
 
@@ -47,9 +46,16 @@ class MidiCatalogEntry:
 
 
 @dataclass(frozen=True)
-class ServerConfig:
+class ModelAsset:
+    model_id: str
     model: Path
     metadata: Path
+
+
+@dataclass(frozen=True)
+class ServerConfig:
+    models: dict[str, ModelAsset]
+    default_model_id: str
     midi_dir: Path
     chunk_frames: int
     seed: int
@@ -88,16 +94,21 @@ class ClientSession:
         self._midi_tempo_scale = 1.0
         self._midi_loop = False
         self._midi_state = "stopped"
+        self.model_id = getattr(config, "default_model_id", "paper_ir")
 
-    async def start(self, piano_model: int, server_gain: float) -> None:
+    async def start(self, model_id: str, piano_model: int, server_gain: float) -> None:
         await self.stop(notify=False)
+        if model_id not in self.config.models:
+            raise ValueError(f"Unknown model ID: {model_id!r}")
+        self.model_id = model_id
+        asset = self.config.models[model_id]
         self.server_gain = _bounded_float(server_gain, "server_gain", 0.05, 16.0)
         await self._send_json({"type": "status", "state": "loading"})
 
         def create_and_warm_up() -> tuple[RealtimeOnnxSynthesizer, int]:
             synth = RealtimeOnnxSynthesizer(
-                self.config.model,
-                self.config.metadata,
+                asset.model,
+                asset.metadata,
                 piano_model=piano_model,
                 chunk_frames=self.config.chunk_frames,
                 seed=self.config.seed,
@@ -140,6 +151,7 @@ class ClientSession:
         event_type = payload.get("type")
         if event_type == "start":
             await self.start(
+                str(payload.get("model_id", self.config.default_model_id)),
                 _bounded_int(payload.get("piano_model", 9), "piano_model", 0, 127),
                 payload.get("server_gain", 1.0),
             )
@@ -536,13 +548,11 @@ def create_app(config: ServerConfig) -> web.Application:
         return web.FileResponse(WEB_ROOT / request.path.removeprefix("/"))
 
     async def health(_: web.Request) -> web.Response:
-        metadata = json.loads(config.metadata.read_text(encoding="utf-8"))
         return web.json_response(
             {
                 "status": "ok",
-                "model": config.model.name,
-                "release_version": model_output_label(config.model, metadata),
-                "host_dsp_profile": metadata.get("host_dsp_profile", "legacy"),
+                "models": list(config.models),
+                "default_model_id": config.default_model_id,
                 "active_clients": len(app["clients"]),
                 "max_clients": config.max_clients,
                 "midi_files": len(app["midi_catalog"]),
@@ -567,14 +577,23 @@ def create_app(config: ServerConfig) -> web.Application:
         app["clients"].add(websocket)
         client = ClientSession(websocket, config, app["midi_catalog"])
         try:
-            metadata = json.loads(config.metadata.read_text(encoding="utf-8"))
-            release_version = model_output_label(config.model, metadata)
+            default_asset = config.models[config.default_model_id]
+            metadata = json.loads(default_asset.metadata.read_text(encoding="utf-8"))
             await websocket.send_json(
                 {
                     "type": "hello",
                     "protocol_version": 2,
-                    "model": config.model.name,
-                    "release_version": release_version,
+                    "model": default_asset.model.name,
+                    "model_id": config.default_model_id,
+                    "models": [
+                        {
+                            "model_id": asset.model_id,
+                            "display_name": json.loads(
+                                asset.metadata.read_text(encoding="utf-8")
+                            ).get("display_name", asset.model_id),
+                        }
+                        for asset in config.models.values()
+                    ],
                     "host_dsp_profile": metadata.get("host_dsp_profile", "legacy"),
                     "piano_model_years": metadata.get(
                         "piano_model_index_to_maestro_year", []
@@ -649,8 +668,8 @@ def _load_midi_catalog(midi_dir: Path) -> dict[str, MidiCatalogEntry]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL)
-    parser.add_argument("--metadata", type=Path, default=DEFAULT_METADATA)
+    parser.add_argument("--artifacts-dir", type=Path, default=DEFAULT_ARTIFACTS_DIR)
+    parser.add_argument("--model-id", default="paper_ir")
     parser.add_argument("--midi-dir", type=Path, default=DEFAULT_MIDI_DIR)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
@@ -684,9 +703,23 @@ def main() -> None:
     args = parse_args()
     if not WEB_ROOT.is_dir():
         raise FileNotFoundError(f"Browser application not found: {WEB_ROOT}")
+    registry = load_model_registry()
+    default_spec = registry.require(args.model_id)
+    artifacts_dir = args.artifacts_dir.resolve()
+    models: dict[str, ModelAsset] = {}
+    for model_id, spec in registry.models.items():
+        model = spec.asset_path(artifacts_dir, ".onnx")
+        metadata = spec.asset_path(artifacts_dir, ".json")
+        if model.is_file() and metadata.is_file():
+            models[model_id] = ModelAsset(model_id, model, metadata)
+    if default_spec.model_id not in models:
+        raise FileNotFoundError(
+            f"Model {default_spec.model_id!r} is missing from {artifacts_dir}; "
+            "run scripts/prepare_release.py first"
+        )
     config = ServerConfig(
-        model=args.model.resolve(),
-        metadata=args.metadata.resolve(),
+        models=models,
+        default_model_id=default_spec.model_id,
         midi_dir=args.midi_dir.resolve(),
         chunk_frames=args.chunk_frames,
         seed=args.seed,
@@ -700,8 +733,6 @@ def main() -> None:
         torch_threads=args.torch_threads,
         torch_interop_threads=args.torch_interop_threads,
     )
-    if not config.model.is_file() or not config.metadata.is_file():
-        raise FileNotFoundError("Both --model and --metadata must exist")
     if not config.midi_dir.is_dir():
         raise FileNotFoundError(f"MIDI directory not found: {config.midi_dir}")
     if (

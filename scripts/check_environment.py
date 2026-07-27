@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import shutil
 import sys
@@ -11,6 +12,9 @@ import torch
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--require-cuda", action="store_true")
+    args = parser.parse_args()
     failures = 0
     print(f"torch={torch.__version__}")
     print(f"cuda_available={torch.cuda.is_available()}")
@@ -42,7 +46,7 @@ def main() -> int:
     print(f"hf={hf or 'MISSING'}")
     if hf is None:
         failures += 1
-    if not torch.cuda.is_available():
+    if args.require_cuda and not torch.cuda.is_available():
         print("ERROR: CUDA is required for practical training", file=sys.stderr)
         failures += 1
     return int(failures > 0)

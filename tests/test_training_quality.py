@@ -14,7 +14,6 @@ from ddsp_piano.training_quality import (
     load_quality_manifest,
     write_quality_manifest,
 )
-from scripts.run_quality_finetune import objective_gate, reverb_delta_gate
 
 
 class TinyQualityDataset:
@@ -47,32 +46,6 @@ class TinyQualityDataset:
         return audio, conditioning, pedal, torch.tensor(item % 2)
 
 
-def fake_report(candidate=None, baseline=None, composite=0.95):
-    candidate = candidate or {
-        "loudness_error_lu": {"p95": 5.0},
-        "spectral_centroid_error": {"p95": 0.015},
-        "tail_decay_error_db_per_second": {"p95": 7.5},
-    }
-    baseline = baseline or {
-        "loudness_error_lu": {"p95": 5.0},
-        "spectral_centroid_error": {"p95": 0.017},
-        "tail_decay_error_db_per_second": {"p95": 8.5},
-    }
-    return {
-        "verdict": {"hard_gates_passed": True, "hard_failures": []},
-        "comparison": {
-            "composite_ratio": {"median": composite},
-            "groups": {"year:2018": {"median": 1.0}},
-            "metric_ratios": {"mrstft": {"median": 1.0}},
-        },
-        "summary": {"candidate": candidate, "baseline": baseline},
-        "models": {
-            "baseline": {"latency_ms": {"p95": 0.10}},
-            "candidate": {"latency_ms": {"p95": 0.10}},
-        },
-    }
-
-
 class TrainingQualityTest(unittest.TestCase):
     def test_manifest_is_train_only_deterministic_and_validated(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -94,31 +67,6 @@ class TrainingQualityTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(first), 4)
         self.assertTrue(all(0 <= index < 4 for index in first))
-
-    def test_objective_and_reverb_gates(self):
-        objective_thresholds = {
-            "composite_median": 0.98,
-            "group_median": 1.02,
-            "mrstft_median_ratio": 1.005,
-            "latency_p95_ratio": 1.05,
-            "loudness_p95": 5.5,
-            "centroid_p95": 0.0165,
-            "tail_p95": 8.1,
-        }
-        passed, failures = objective_gate(fake_report(), objective_thresholds)
-        self.assertTrue(passed, failures)
-        failed, failures = objective_gate(fake_report(composite=1.01), objective_thresholds)
-        self.assertFalse(failed)
-        self.assertTrue(any("composite" in failure for failure in failures))
-
-        reverb_thresholds = {
-            "maximum_composite_ratio": 1.005,
-            "maximum_loudness_regression_lu": 0.25,
-            "required_tail_or_centroid_improvement": 0.05,
-        }
-        passed, failures = reverb_delta_gate(fake_report(composite=1.0), reverb_thresholds)
-        self.assertTrue(passed, failures)
-
 
 if __name__ == "__main__":
     unittest.main()

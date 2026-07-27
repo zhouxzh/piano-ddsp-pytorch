@@ -1,4 +1,4 @@
-"""PyTorch equivalents of the main DDSP-Piano v2 control modules."""
+"""Configurable DDSP-Piano control modules with ONNX-friendly state."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from ddsp_piano.modules import sub_modules
 
 
 class ResidualFiLMContextNetwork(nn.Module):
-    """Identity-initialized FiLM adapter around the v1 context network."""
+    """Identity-initialized FiLM adapter around the legacy context network."""
 
     def __init__(self, z_dim: int = 16, context_dim: int = 32) -> None:
         super().__init__()
@@ -39,7 +39,7 @@ class ResidualFiLMContextNetwork(nn.Module):
 
 
 class ResidualDeepMonophonicNetwork(nn.Module):
-    """Zero-output deep adapter around the fixed 96/64 v1 decoder."""
+    """Zero-output deep adapter around the fixed 96/64 legacy decoder."""
 
     def __init__(self, context_dim: int = 32, hidden_dim: int = 64) -> None:
         super().__init__()
@@ -89,7 +89,7 @@ class ResidualDeepMonophonicNetwork(nn.Module):
 
 
 class ResidualJointInharmonicity(nn.Module):
-    """Identity-initialized pitch-curve correction around the v1 prior."""
+    """Identity-initialized pitch-curve correction around the legacy prior."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -203,7 +203,7 @@ class MonophonicDeepNetwork(nn.Module):
 
 
 class JointParametricInharmTuning(nn.Module):
-    """Joint bass/treble inharmonicity curve used by the v2 model."""
+    """Joint bass/treble inharmonicity curve used by the FiLM model."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -227,7 +227,7 @@ class JointParametricInharmTuning(nn.Module):
         return coefficient.clamp(1e-5, 0.2)
 
 
-class V2FDNReverbControls(nn.Module):
+class FDNReverbControls(nn.Module):
     """Per-instrument FDN parameters exported as a compact host control vector."""
 
     def __init__(self, n_instruments: int, control_dim: int = 9) -> None:

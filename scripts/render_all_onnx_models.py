@@ -16,7 +16,7 @@ import onnxruntime as ort
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from ddsp_piano.versioning import model_output_label
+from ddsp_piano.model_registry import model_output_label
 from scripts.render_onnx import CONTROL_OUTPUT_NAMES, INPUT_NAMES, _validate_contract
 
 
@@ -91,12 +91,14 @@ def _write_index(path: Path, index: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", type=Path, default=Path("exports"))
+    parser.add_argument(
+        "--model-dir", type=Path, default=Path("artifacts/model-suite-v1.0.0")
+    )
     parser.add_argument("--midi-dir", type=Path, default=Path("midi"))
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("exports/midi_tests/all_models"),
+        default=Path("artifacts/listening/all_models"),
     )
     parser.add_argument("--piano-model", type=int, default=9)
     parser.add_argument("--warm-up-seconds", type=float, default=0.5)
@@ -158,18 +160,18 @@ def main() -> int:
     for model_path, metadata in compatible:
         piano_models = metadata["piano_model_index_to_maestro_year"]
         piano_model = min(args.piano_model, len(piano_models) - 1)
-        release_version = model_output_label(model_path, metadata)
-        output_label = release_version
+        model_id = model_output_label(model_path, metadata)
+        output_label = model_id
         if output_label in used_output_labels:
-            output_label = f"{release_version}-{model_path.stem}"
+            output_label = f"{model_id}-{model_path.stem}"
         used_output_labels.add(output_label)
         output_dir = run_dir / output_label
         entry: dict[str, object] = {
             "model": str(model_path),
             "model_sha256": _model_sha256(model_path),
             "metadata": str(model_path.with_suffix(".json")),
-            "model_variant": metadata.get("model_variant"),
-            "release_version": release_version,
+            "architecture": metadata.get("architecture"),
+            "model_id": model_id,
             "output_label": output_label,
             "training_phase": metadata.get("training_phase"),
             "piano_model": piano_model,

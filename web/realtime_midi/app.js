@@ -3,7 +3,7 @@
 const elements = Object.fromEntries(
   [
     "statusDot", "statusText", "startButton", "stopButton", "panicButton",
-    "recordButton", "downloadButton", "modelName", "streamContract",
+    "recordButton", "downloadButton", "modelSelect", "modelName", "streamContract",
     "pianoModel", "midiDevice", "midiButton", "velocityCurve", "velocity",
     "velocityValue", "velocityMeter", "velocityRaw", "velocitySent", "dynamicMark",
     "serverGain", "serverGainValue", "outputGain", "outputGainValue",
@@ -660,11 +660,13 @@ function handleSocketMessage(event) {
     return;
   }
   if (message.type === "hello") {
-    elements.modelName.textContent = `${message.release_version} · ${message.model}`;
+    elements.modelName.textContent = `${message.model_id} · ${message.model}`;
+    populateModels(message.models || [], message.model_id);
     populatePianoModels(message.piano_model_years);
     populateScoreFiles(message.midi_files || []);
     send({
       type: "start",
+      model_id: elements.modelSelect.value,
       piano_model: Number(elements.pianoModel.value),
       server_gain: Number(elements.serverGain.value),
     });
@@ -698,12 +700,13 @@ function handleStatusMessage(message) {
     elements.sustainButton.disabled = false;
     elements.pianoModel.disabled = false;
     const contract = message.contract;
+    elements.modelName.textContent = `${contract.model_id} · ONNX`;
     elements.streamContract.textContent = `${contract.host_dsp_profile} · ${
       contract.sample_rate / 1000
     } kHz · ${contract.chunk_ms.toFixed(0)} ms · ${contract.max_polyphony} voices · KeyOff ${
       contract.keyoff_fade_ms.toFixed(0)
     } ms`;
-    logEvent(`${contract.release_version} 已启动，钢琴年份 ${contract.piano_year}`);
+    logEvent(`${contract.model_id} 已启动，钢琴年份 ${contract.piano_year}`);
     clearInterval(pingTimer);
     pingTimer = setInterval(() => send({
       type: "ping",
@@ -793,6 +796,31 @@ function populatePianoModels(years) {
     : String(Math.max(0, years.length - 1));
 }
 
+function populateModels(models, selectedModelId) {
+  elements.modelSelect.replaceChildren();
+  models.forEach((model) => {
+    elements.modelSelect.append(new Option(model.display_name, model.model_id));
+  });
+  elements.modelSelect.value = selectedModelId;
+  elements.modelSelect.disabled = models.length < 2;
+}
+
+function changeModel() {
+  if (!streaming) return;
+  streaming = false;
+  setStatus("loading", "切换模型");
+  player?.clear();
+  panic();
+  logEvent(`切换模型：${elements.modelSelect.selectedOptions[0]?.textContent}`);
+  send({
+    type: "start",
+    model_id: elements.modelSelect.value,
+    piano_model: Number(elements.pianoModel.value),
+    server_gain: Number(elements.serverGain.value),
+  });
+  syncScoreControls();
+}
+
 function changePianoTimbre() {
   if (!streaming) return;
   streaming = false;
@@ -804,6 +832,7 @@ function changePianoTimbre() {
   }`);
   send({
     type: "start",
+    model_id: elements.modelSelect.value,
     piano_model: Number(elements.pianoModel.value),
     server_gain: Number(elements.serverGain.value),
   });
@@ -1025,6 +1054,7 @@ elements.sustainButton.addEventListener("click", () => {
 });
 elements.midiButton.addEventListener("click", enableMidi);
 elements.midiDevice.addEventListener("change", () => attachMidiDevice());
+elements.modelSelect.addEventListener("change", changeModel);
 elements.pianoModel.addEventListener("change", changePianoTimbre);
 elements.scoreSelect.addEventListener("change", () => {
   scoreState = "stopped";

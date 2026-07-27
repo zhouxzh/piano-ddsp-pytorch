@@ -30,7 +30,13 @@
           <button id="downloadButton" class="icon-button" type="button" title="下载最近的录音" aria-label="下载最近的录音" disabled>↓</button>
         </div>
         <div class="model-readout">
-          <span id="modelName">v1 · piano_v1.onnx</span>
+          <label class="field model-select-field">
+            <span>模型</span>
+            <select id="modelSelect" disabled>
+              <option value="paper_ir">Paper IR</option>
+            </select>
+          </label>
+          <span id="modelName">paper_ir · 等待加载模型</span>
           <span id="streamContract">等待建立 ONNX 音频流</span>
         </div>
       </section>

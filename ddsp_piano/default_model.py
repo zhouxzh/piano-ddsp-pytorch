@@ -5,14 +5,14 @@ from ddsp_piano.modules.inharm_synth import MultiInharmonic
 from ddsp_piano.ddsp_pytorch.noise import Noise
 from ddsp_piano.ddsp_pytorch.reverb import Reverb
 from ddsp_piano.ddsp_pytorch.fdn import FDNReverb
-from ddsp_piano.modules.v2_sub_modules import (
+from ddsp_piano.modules.configurable_sub_modules import (
     FiLMContextNetwork,
     JointParametricInharmTuning,
     MonophonicDeepNetwork,
     ResidualDeepMonophonicNetwork,
     ResidualFiLMContextNetwork,
     ResidualJointInharmonicity,
-    V2FDNReverbControls,
+    FDNReverbControls,
 )
 
 
@@ -45,7 +45,7 @@ def build_polyphonic_ddsp_module(
 
     return harmonic_synthesizer, noise_synthesizer, reverb_effects
 
-def get_model(
+def build_paper_model(
     inference=False,
     duration=3,
     n_synths=16,
@@ -104,7 +104,7 @@ def get_model(
     return model
 
 
-def get_v2_model(
+def build_configurable_model(
     inference=False,
     duration=3,
     n_synths=16,
@@ -122,7 +122,7 @@ def get_v2_model(
     inharmonicity_type="joint",
     synthesis_layout="serial",
 ):
-    """Build the independent PyTorch DDSP-Piano v2-style model.
+    """Build a configurable DDSP-Piano control model.
 
     Harmonic/noise dimensions and host-side reverb are explicit experiment
     parameters. FFT synthesis remains outside every exported ONNX graph.
@@ -149,7 +149,7 @@ def get_v2_model(
         n_frames=int(duration * frame_rate),
     )
     if reverb_type == "fdn":
-        reverb_model = V2FDNReverbControls(n_piano_models)
+        reverb_model = FDNReverbControls(n_piano_models)
         reverb_module = FDNReverb(
             sample_rate=sample_rate,
             length=int(reverb_duration * sample_rate),

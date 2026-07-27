@@ -16,7 +16,7 @@ import torch
 from mido import MidiFile, merge_tracks, tick2second
 
 from ddsp_piano.ddsp_pytorch.fdn import fdn_impulse_response
-from ddsp_piano.versioning import model_output_label
+from ddsp_piano.model_registry import model_output_label
 from scripts.render_onnx import (
     _StreamingDrySynthesizer,
     _StreamingOnnxRunner,
@@ -478,7 +478,7 @@ class RealtimeOnnxSynthesizer:
         years = self.metadata.get("piano_model_index_to_maestro_year", [])
         return {
             "model": self.model_path.name,
-            "release_version": model_output_label(self.model_path, self.metadata),
+            "model_id": model_output_label(self.model_path, self.metadata),
             "host_dsp_profile": self.metadata.get("host_dsp_profile", "legacy"),
             "sample_rate": self.sample_rate,
             "frame_rate": self.frame_rate,

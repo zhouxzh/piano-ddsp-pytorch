@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from ddsp_piano.maestro import MaestroSegmentDataset, PreprocessConfig
+from ddsp_piano.model_registry import load_model_registry
 from scripts.render_onnx import _run_onnx, _shape, _synthesize, _write_normalized_wav
 
 
@@ -70,30 +71,37 @@ def _render_segment(model_path: Path, metadata: dict, segment, warm_up_seconds: 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--baseline-id", default="paper_ir")
+    parser.add_argument("--candidate-id", required=True)
     parser.add_argument(
-        "--v1",
-        "--current",
-        dest="v1",
-        type=Path,
-        required=True,
-        help="v1 ONNX export (--current remains a compatibility alias)",
+        "--artifacts-dir", type=Path, default=Path("artifacts/model-suite-v1.0.0")
     )
-    parser.add_argument("--v2", type=Path, required=True)
     parser.add_argument("--maestro-root", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, default=Path("exports/model_comparison"))
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("artifacts/comparisons/segments")
+    )
     parser.add_argument("--indices", default="0,-1", help="Comma-separated cached segment indices")
     parser.add_argument("--warm-up-seconds", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=20260722)
     args = parser.parse_args()
 
-    v1_metadata = json.loads(args.v1.with_suffix(".json").read_text(encoding="utf-8"))
-    v2_metadata = json.loads(args.v2.with_suffix(".json").read_text(encoding="utf-8"))
+    registry = load_model_registry()
+    baseline_spec = registry.require(args.baseline_id)
+    candidate_spec = registry.require(args.candidate_id)
+    baseline_path = baseline_spec.asset_path(args.artifacts_dir, ".onnx").resolve()
+    candidate_path = candidate_spec.asset_path(args.artifacts_dir, ".onnx").resolve()
+    baseline_metadata = json.loads(
+        baseline_path.with_suffix(".json").read_text(encoding="utf-8")
+    )
+    candidate_metadata = json.loads(
+        candidate_path.with_suffix(".json").read_text(encoding="utf-8")
+    )
     config = PreprocessConfig(
-        sample_rate=int(v1_metadata["sample_rate"]),
-        frame_rate=int(v1_metadata["frame_rate"]),
+        sample_rate=int(baseline_metadata["sample_rate"]),
+        frame_rate=int(baseline_metadata["frame_rate"]),
         segment_seconds=3.0,
-        max_polyphony=int(_shape(v1_metadata, "inputs", "conditioning")[2]),
+        max_polyphony=int(_shape(baseline_metadata, "inputs", "conditioning")[2]),
     )
     dataset = MaestroSegmentDataset(
         args.maestro_root,
@@ -112,13 +120,19 @@ def main() -> int:
             indices.append(index)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    report = {"segments": [], "models": {"v1": str(args.v1), "v2": str(args.v2)}}
+    report = {
+        "segments": [],
+        "models": {
+            "baseline": {"model_id": args.baseline_id, "path": str(baseline_path)},
+            "candidate": {"model_id": args.candidate_id, "path": str(candidate_path)},
+        },
+    }
     for segment_index in indices:
         segment = dataset[segment_index]
         entry = {"index": segment_index}
         for label, model_path, metadata in (
-            ("v1", args.v1, v1_metadata),
-            ("v2", args.v2, v2_metadata),
+            ("baseline", baseline_path, baseline_metadata),
+            ("candidate", candidate_path, candidate_metadata),
         ):
             signals, target, piano_id = _render_segment(
                 model_path, metadata, segment, args.warm_up_seconds, args.seed

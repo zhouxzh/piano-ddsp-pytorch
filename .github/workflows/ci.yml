@@ -1,0 +1,31 @@
+name: CPU validation
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -v
+      - name: Export all model contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for model_id in paper_ir film_fdn calibrated_ir calibrated_film_ir; do
+            python scripts/make_smoke_checkpoint.py \
+              --model-id "${model_id}" \
+              --output "artifacts/smoke/${model_id}.pt"
+            python scripts/export_onnx.py \
+              --model-id "${model_id}" \
+              --checkpoint "artifacts/smoke/${model_id}.pt" \
+              --output "artifacts/smoke/${model_id}.onnx" \
+              --verify-steps 4
+          done

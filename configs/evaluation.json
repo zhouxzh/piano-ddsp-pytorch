@@ -1,6 +1,6 @@
 {
-  "schema": "ddsp-piano-eval-config/v1",
-  "suite_id": "quality-v1",
+  "schema": "ddsp-piano-eval-config/v2",
+  "suite_id": "model-suite-comparison",
   "preprocess": {
     "sample_rate": 16000,
     "frame_rate": 250,
@@ -12,16 +12,16 @@
     "warm_up_seconds": 0.5,
     "tail_seconds": 2.5,
     "chunk_seconds": 4.0,
-    "noise_seed": 20260722
+    "noise_seed": 20260724
   },
   "metrics": {
     "fft_sizes": [2048, 1024, 512, 256, 128, 64],
     "weights": {
-      "mrstft": 0.5,
-      "loudness_error_lu": 0.2,
+      "mrstft": 0.55,
+      "loudness_error_lu": 0.1,
       "onset_envelope_l1": 0.15,
       "spectral_centroid_error": 0.1,
-      "tail_decay_error_db_per_second": 0.05
+      "tail_decay_error_db_per_second": 0.1
     }
   },
   "profiles": {
@@ -37,8 +37,8 @@
     "group_median": 1.05,
     "loudness_p95_regression_lu": 1.0,
     "latency_p95_ratio": 1.25,
-    "human_preference_rate": 0.6,
-    "human_dimension_regression": 0.25,
+    "human_preference_rate": 0.65,
+    "human_dimension_regression": 0.15,
     "human_repeated_artifacts": 2
   },
   "listening": {

@@ -18,9 +18,9 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from ddsp_piano.default_model import get_model, get_v2_model
+from ddsp_piano.default_model import build_configurable_model, build_paper_model
 from ddsp_piano.deployment import PianoRealtimeControlModel
-from ddsp_piano.versioning import release_version_for_variant
+from ddsp_piano.model_registry import load_model_registry
 
 
 INPUT_NAMES = [
@@ -31,7 +31,7 @@ INPUT_NAMES = [
     "context_state",
     "monophonic_state",
 ]
-CURRENT_OUTPUT_NAMES = [
+IR_OUTPUT_NAMES = [
     "amplitudes",
     "harmonic_distribution",
     "inharmonicity",
@@ -41,7 +41,7 @@ CURRENT_OUTPUT_NAMES = [
     "next_context_state",
     "next_monophonic_state",
 ]
-V2_OUTPUT_NAMES = [
+FDN_OUTPUT_NAMES = [
     "amplitudes",
     "harmonic_distribution",
     "inharmonicity",
@@ -107,7 +107,7 @@ def _merge_comparison(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=Path("exports/piano_controls.onnx"))
+    parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--sample-rate", type=int)
     parser.add_argument("--frame-rate", type=int)
     parser.add_argument("--frames", type=int, default=1)
@@ -115,8 +115,8 @@ def main() -> int:
     parser.add_argument("--opset", type=int, default=13)
     parser.add_argument("--atol", type=float, default=1e-4)
     parser.add_argument("--rtol", type=float, default=1e-4)
-    parser.add_argument("--verify-steps", type=int, default=4)
-    parser.add_argument("--model-variant", choices=("auto", "current", "v2"), default="auto")
+    parser.add_argument("--verify-steps", type=int, default=100)
+    parser.add_argument("--model-id", required=True)
     args = parser.parse_args()
 
     if args.frames <= 0:
@@ -124,6 +124,8 @@ def main() -> int:
     if args.verify_steps <= 0:
         raise ValueError("--verify-steps must be positive")
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    registry = load_model_registry()
+    model_spec = registry.require(args.model_id)
     piano_models = checkpoint.get("piano_models")
     if not piano_models:
         raise ValueError("Checkpoint does not contain piano_models")
@@ -134,28 +136,21 @@ def main() -> int:
     if sample_rate % frame_rate:
         raise ValueError("sample rate must be divisible by frame rate")
 
-    checkpoint_variant = checkpoint.get("args", {}).get("model_variant", "current")
-    model_variant = checkpoint_variant if args.model_variant == "auto" else args.model_variant
     checkpoint_args = checkpoint.get("args", {})
-    n_harmonics = int(
-        checkpoint_args.get("n_harmonics", 128 if model_variant == "v2" else 96)
+    model_config = model_spec.model
+    n_harmonics = int(model_config["n_harmonics"])
+    n_noise_bands = int(model_config["n_noise_bands"])
+    reverb_type = str(model_config["reverb_type"])
+    context_type = str(model_config["context_type"])
+    monophonic_type = str(model_config["monophonic_type"])
+    inharmonicity_type = str(model_config["inharmonicity_type"])
+    reverb_wet_gain_arg = float(model_config["reverb_wet_gain"])
+    model_builder = (
+        build_configurable_model
+        if model_spec.architecture == "configurable"
+        else build_paper_model
     )
-    n_noise_bands = int(
-        checkpoint_args.get("n_noise_bands", 96 if model_variant == "v2" else 64)
-    )
-    reverb_type = str(
-        checkpoint_args.get("reverb_type", "fdn" if model_variant == "v2" else "ir")
-    )
-    context_type = str(checkpoint_args.get("context_type", "film"))
-    monophonic_type = str(checkpoint_args.get("monophonic_type", "deep"))
-    inharmonicity_type = str(checkpoint_args.get("inharmonicity_type", "joint"))
-    if model_variant != "v2":
-        context_type = "legacy"
-        monophonic_type = "legacy"
-        inharmonicity_type = "legacy"
-    reverb_wet_gain_arg = float(checkpoint_args.get("reverb_wet_gain", 0.25))
-    model_builder = get_v2_model if model_variant == "v2" else get_model
-    output_names = V2_OUTPUT_NAMES if reverb_type == "fdn" else CURRENT_OUTPUT_NAMES
+    output_names = FDN_OUTPUT_NAMES if reverb_type == "fdn" else IR_OUTPUT_NAMES
     model_kwargs = dict(
         inference=True,
         n_synths=max_polyphony,
@@ -165,7 +160,7 @@ def main() -> int:
         frame_rate=frame_rate,
         reverb_wet_gain=reverb_wet_gain_arg,
     )
-    if model_variant == "v2":
+    if model_spec.architecture == "configurable":
         model_kwargs.update(
             n_harmonics=n_harmonics,
             n_noise_filter_banks=n_noise_bands,
@@ -240,13 +235,30 @@ def main() -> int:
     output_contract = {name: _shape(value) for name, value in zip(output_names, ort_outputs)}
     operator_counts = dict(sorted(Counter(node.op_type for node in onnx_model.graph.node).items()))
     parameter_bytes = sum(parameter.numel() * parameter.element_size() for parameter in model.parameters())
-    release_version = release_version_for_variant(model_variant)
     reverb_wet_gain = float(getattr(model.reverb_module, "wet_gain", 1.0))
+    loss_calibration = checkpoint.get("loss_calibration")
+    if isinstance(loss_calibration, dict):
+        loss_calibration = dict(loss_calibration)
+        loss_calibration.pop("quality_manifest", None)
+    initialization = checkpoint.get("initialization")
+    if isinstance(initialization, dict):
+        initialization = {
+            key: initialization[key]
+            for key in ("checkpoint_sha256", "loaded_tensors", "target_tensors")
+            if key in initialization
+        }
     metadata = {
-        "checkpoint": str(args.checkpoint),
+        "schema": "ddsp-piano-model/v1",
+        "model_suite_release": registry.release,
+        "model_id": model_spec.model_id,
+        "display_name": model_spec.display_name,
+        "description": model_spec.description,
+        "architecture": model_spec.architecture,
+        "lineage": model_spec.lineage,
+        "checkpoint": f"{model_spec.asset_basename}.pt",
         "checkpoint_sha256": _sha256_file(args.checkpoint),
-        "onnx": str(args.output),
-        "artifact_name": args.output.stem,
+        "onnx": args.output.name,
+        "artifact_name": model_spec.asset_basename,
         "opset": args.opset,
         "dtype": "FP32",
         "sample_rate": sample_rate,
@@ -255,12 +267,13 @@ def main() -> int:
         "audio_samples_per_call": args.frames * (sample_rate // frame_rate),
         "release_frames": frame_rate,
         "training_phase": phase,
-        "model_variant": model_variant,
-        "release_version": release_version,
+        "onnx_status": "verified",
+        "om_status": "pending",
+        "quality_status": model_spec.quality_status,
         "host_dsp_profile": (
-            f"{release_version}-learned-ir-wet-{reverb_wet_gain:g}"
+            f"learned-ir-wet-{reverb_wet_gain:g}"
             if reverb_type == "ir"
-            else f"{release_version}-fdn-controls"
+            else "fdn-controls"
         ),
         "model_config": {
             "n_harmonics": n_harmonics,
@@ -275,8 +288,8 @@ def main() -> int:
             "velocity_loss_weight": float(
                 checkpoint_args.get("velocity_loss_weight", 0.0)
             ),
-            "loss_calibration": checkpoint.get("loss_calibration"),
-            "initialization": checkpoint.get("initialization"),
+            "loss_calibration": loss_calibration,
+            "initialization": initialization,
             "validation_corpus_sha256": checkpoint.get("validation_corpus_sha256"),
         },
         "n_harmonics": output_contract["harmonic_distribution"][-1],
@@ -295,7 +308,7 @@ def main() -> int:
                 "type": "exponential_decay",
                 "decay_start_samples": 16_000,
                 "decay_exponent": 4.0,
-                "reference": "ddsp_piano.modules.sub_modules.MultiInstrumentReverb",
+            "reference": "ddsp_piano.modules.sub_modules.MultiInstrumentReverb",
             }
             if reverb_type == "ir"
             else {
@@ -317,7 +330,7 @@ def main() -> int:
         "control_postprocess_reference": "ddsp_piano.deployment.scale_controls_for_synthesis",
         "validation_scope": (
             "PyTorch CPU reference, onnx.checker, and ONNX Runtime stateful numerical "
-            "equivalence are required for this server. OM/CANN validation is out of scope."
+            "equivalence are required in this repository. OM/CANN validation is out of scope."
         ),
     }
     metadata_path = args.output.with_suffix(".json")
