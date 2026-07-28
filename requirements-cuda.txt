@@ -11,3 +11,4 @@ onnxruntime==1.15.1
 aiohttp==3.13.3
 huggingface_hub==1.11.0
 hf_xet==1.4.3
+tensorboard==2.20.0

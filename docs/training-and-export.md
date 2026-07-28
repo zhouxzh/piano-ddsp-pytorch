@@ -21,8 +21,29 @@ python scripts/train_model_suite.py
 - `refine`：保持 detune 生效，冻结 pitch 参数并微调控制网络。
 - `calibrate`：从 `paper_ir/refine` 初始化 `calibrated_ir`，使用感知损失并冻结 IR。
 
-编排状态位于 `runs/model-suite-v1.1.0-rc1/pipeline-state.json`。进程中断后执行同一命令即可从
+编排状态位于当前 `--run-root` 下的 `pipeline-state.json`（本轮为
+`runs/model-suite-v1.1.0-tb/pipeline-state.json`）。进程中断后执行同一命令即可从
 `last.pt` 的 epoch、样本偏移、优化器、LR scheduler、AMP scaler 和 RNG 状态继续。
+
+每个模型阶段同时写入 `<experiment-dir>/tensorboard/`。在服务器上查看新的 TensorBoard 训练记录：
+
+```bash
+tensorboard --logdir runs/model-suite-v1.1.0-tb --bind_all --port 6006
+```
+
+通过 VSCode 转发 `6006` 端口即可查看。`metrics.jsonl` 仍是机器可读的权威记录，TensorBoard
+用于观察 loss、验证损失、学习率、覆盖率、吞吐和显存。
+
+旧训练如果没有 event 文件，可以将保留的 `metrics.jsonl` 和 `pipeline.log` 导入当前 TensorBoard：
+
+```bash
+python scripts/import_training_metrics_to_tensorboard.py \
+  --source-root runs/model-suite-v1.1.0-rc1 \
+  --output-root runs/model-suite-v1.1.0-tb/history/model-suite-v1.1.0-rc1 \
+  --pipeline-log runs/model-suite-v1.1.0-rc1/pipeline.log
+```
+
+导入程序不会覆盖已有 event 文件；需要重新导入时请指定新的输出目录。
 
 发布打包程序需要四个源 checkpoint：
 

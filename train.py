@@ -17,6 +17,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, Subset
 
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:  # pragma: no cover - only minimal installs lack TensorBoard
+    SummaryWriter = None
+
 from ddsp_piano.default_model import build_configurable_model, build_paper_model
 from ddsp_piano.evaluation import build_corpus
 from ddsp_piano.maestro import MaestroSegmentDataset, PreprocessConfig, prepare_split
@@ -110,6 +115,17 @@ def parse_args() -> argparse.Namespace:
         default="standard",
     )
     parser.add_argument("--log-every", type=int, default=20)
+    parser.add_argument(
+        "--tensorboard",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write TensorBoard event files alongside metrics.jsonl",
+    )
+    parser.add_argument(
+        "--tensorboard-logdir",
+        type=Path,
+        help="TensorBoard directory; defaults to <experiment-dir>/tensorboard",
+    )
     parser.add_argument(
         "--spectral-layout",
         choices=("separate", "combined"),
@@ -1149,6 +1165,33 @@ def main() -> int:
         encoding="utf-8",
     )
     metrics_path = args.experiment_dir / "metrics.jsonl"
+    if args.tensorboard and SummaryWriter is None:
+        raise RuntimeError(
+            "TensorBoard logging is enabled but tensorboard is not installed; "
+            "install requirements-cuda.txt or pass --no-tensorboard"
+        )
+    tensorboard_logdir = args.tensorboard_logdir or (args.experiment_dir / "tensorboard")
+    writer = (
+        SummaryWriter(log_dir=str(tensorboard_logdir), flush_secs=30)
+        if args.tensorboard
+        else None
+    )
+    if writer is not None:
+        writer.add_text(
+            "run/config",
+            json.dumps(
+                {
+                    "model_id": args.model_id,
+                    "stage": args.stage,
+                    "detune_enabled": bool(model.detuner.use_detune),
+                    "args": vars(args),
+                    "preprocess": config.__dict__,
+                },
+                default=str,
+                indent=2,
+            ),
+            global_step=0,
+        )
     autocast = torch.amp.autocast if device.type == "cuda" else nullcontext
     training_model = model
     if args.compile_training:
@@ -1272,6 +1315,28 @@ def main() -> int:
                     f"velocity={logged[8]:.5f}",
                     flush=True,
                 )
+                if writer is not None:
+                    for name, value in zip(
+                        (
+                            "loss",
+                            "spectral",
+                            "dry",
+                            "reverb",
+                            "energy",
+                            "onset",
+                            "centroid",
+                            "tail",
+                            "velocity",
+                        ),
+                        logged,
+                    ):
+                        writer.add_scalar(f"train/{name}", value, global_step)
+                    writer.add_scalar(
+                        "train/learning_rate",
+                        lr_scheduler.get_last_lr()[0],
+                        global_step,
+                    )
+                    writer.add_scalar("train/examples_seen", examples_seen, global_step)
             if (
                 args.validation_every_examples
                 and epoch_examples >= next_validation_example
@@ -1332,6 +1397,19 @@ def main() -> int:
                 with metrics_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(partial_metrics) + "\n")
                 print(json.dumps(partial_metrics), flush=True)
+                if writer is not None:
+                    writer.add_scalar("validation/loss", validation_loss, global_step)
+                    writer.add_scalar(
+                        "validation/coverage_passes",
+                        progress["coverage_passes_completed"],
+                        global_step,
+                    )
+                    writer.add_scalar(
+                        "system/peak_cuda_memory_gib",
+                        partial_performance["peak_cuda_memory_bytes"] / 2**30,
+                        global_step,
+                    )
+                    writer.flush()
                 if validation_loss < best_validation:
                     best_validation = validation_loss
                     save_checkpoint(
@@ -1442,6 +1520,25 @@ def main() -> int:
         progress = stage_progress_metadata(
             base_stage_metadata, epoch, epoch_examples, examples_seen
         )
+        if writer is not None:
+            if validation_loss is not None:
+                writer.add_scalar("validation/loss", validation_loss, global_step)
+            writer.add_scalar(
+                "validation/coverage_passes",
+                progress["coverage_passes_completed"],
+                global_step,
+            )
+            writer.add_scalar(
+                "system/examples_per_second",
+                training_performance["examples_per_second"],
+                global_step,
+            )
+            writer.add_scalar(
+                "system/peak_cuda_memory_gib",
+                training_performance["peak_cuda_memory_bytes"] / 2**30,
+                global_step,
+            )
+            writer.flush()
         sampler_state = (
             curriculum_sampler.state_dict(epoch_examples)
             if isinstance(curriculum_sampler, CoverageCurriculumSampler)
@@ -1515,6 +1612,9 @@ def main() -> int:
                 True,
             )
         resume_epoch_offset = 0
+    if writer is not None:
+        writer.flush()
+        writer.close()
     return 0
 
 

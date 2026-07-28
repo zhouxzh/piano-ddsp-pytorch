@@ -16,6 +16,10 @@
 vectorized synthesis、fused Adam、2% warmup、cosine decay 和梯度裁剪 1.0。预计总耗时为
 48 到 72 GPU 小时。
 
+训练默认写入 TensorBoard event 文件；每个模型阶段单独位于
+`<experiment-dir>/tensorboard/`，同时保留 `metrics.jsonl`。TensorBoard 只负责过程观察，模型质量
+仍以标准自动报告、试听 WAV 和人工评测为准。
+
 ## 产物与门禁
 
 候选 checkpoint 记录 stage、detune 状态、数据集哈希、十音色样本数量、可训练参数、覆盖率和精确
