@@ -100,7 +100,7 @@
         "stage_schedule": {
           "controls": {"epochs": 2, "learning_rate": 0.001},
           "pitch": {"epochs": 1, "learning_rate": 0.00001},
-          "refine": {"epochs": 1, "learning_rate": 0.0001}
+          "refine": {"epochs": 1, "learning_rate": 0.0001, "batch_size": 6}
         }
       }
     },
@@ -193,7 +193,7 @@
         "stage_schedule": {
           "controls": {"epochs": 2, "learning_rate": 0.0003},
           "pitch": {"epochs": 1, "learning_rate": 0.00001},
-          "refine": {"epochs": 1, "learning_rate": 0.0001}
+          "refine": {"epochs": 1, "learning_rate": 0.0001, "batch_size": 6}
         }
       }
     }

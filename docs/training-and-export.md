@@ -10,9 +10,11 @@ MAESTRO 数据保存在 `data/maestro-v3.0.0`，预处理缓存保存在
 python scripts/train_model_suite.py
 ```
 
-程序先构建 train-only 质量 manifest，再对四个架构做 batch 8 基准；显存预留超过 26 GiB 时
-自动降为 batch 6。每个 coverage epoch 遍历全部 348,657 个训练片段一次，再追加 20% 困难样本。
-每处理约四分之一训练集执行一次 200 片段平衡验证并保存可精确恢复的 sampler 偏移。
+程序先构建 train-only 质量 manifest，并在每个未完成阶段开始前执行对应模型、阶段和 batch size
+的短基准。显存预留超过 26 GiB 时停止并把失败阶段写入 `pipeline-state.json`。默认 batch 8；
+`film_fdn/refine` 和 `calibrated_film_ir/refine` 根据 RTX 5090 D 实测固定使用 batch 6。每个
+coverage epoch 遍历全部 348,657 个训练片段一次，再追加 20% 困难样本。每处理约四分之一
+训练集执行一次 200 片段平衡验证并保存可精确恢复的 sampler 偏移。
 
 显式训练阶段为：
 
@@ -24,6 +26,8 @@ python scripts/train_model_suite.py
 编排状态位于当前 `--run-root` 下的 `pipeline-state.json`（本轮为
 `runs/model-suite-v1.1.0-tb/pipeline-state.json`）。进程中断后执行同一命令即可从
 `last.pt` 的 epoch、样本偏移、优化器、LR scheduler、AMP scaler 和 RNG 状态继续。
+已经存在 `complete.json` 的阶段会被跳过；如果失败阶段没有生成 `last.pt`，则从父阶段的
+`best.pt` 重新开始。状态文件同时记录 `active_stage`、阶段 batch size、失败原因和返回码。
 
 每个模型阶段同时写入 `<experiment-dir>/tensorboard/`。在服务器上查看新的 TensorBoard 训练记录：
 

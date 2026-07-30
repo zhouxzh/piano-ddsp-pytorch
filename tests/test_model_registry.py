@@ -31,6 +31,17 @@ class ModelRegistryTest(unittest.TestCase):
         for spec in registry.models.values():
             self.assertEqual(spec.training["sampling_mode"], "coverage")
             self.assertEqual(spec.training["batch_size"], 8)
+        self.assertEqual(
+            registry.require("film_fdn").training["stage_schedule"]["refine"][
+                "batch_size"
+            ],
+            6,
+        )
+        self.assertEqual(
+            registry.require("calibrated_film_ir")
+            .training["stage_schedule"]["refine"]["batch_size"],
+            6,
+        )
 
 
 if __name__ == "__main__":

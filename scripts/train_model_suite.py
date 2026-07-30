@@ -31,14 +31,42 @@ def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def run(command: list[str], state: dict, state_path: Path, dry_run: bool) -> None:
+def run(
+    command: list[str],
+    state: dict,
+    state_path: Path,
+    dry_run: bool,
+    *,
+    operation: str = "command",
+    stage_key: str | None = None,
+    stage_batch_size: int | None = None,
+) -> None:
     printable = " ".join(command)
+    state["status"] = "running"
     state["last_command"] = printable
+    state["active_operation"] = operation
+    state.pop("return_code", None)
+    state.pop("failure_reason", None)
+    state.pop("failed_stage", None)
+    if stage_key is not None:
+        state["active_stage"] = stage_key
+    if stage_batch_size is not None:
+        state["stage_batch_size"] = stage_batch_size
     state["updated_at"] = utc_now()
     write_json(state_path, state)
     print(f"$ {printable}", flush=True)
     if not dry_run:
-        subprocess.run(command, cwd=ROOT, check=True)
+        try:
+            subprocess.run(command, cwd=ROOT, check=True)
+        except subprocess.CalledProcessError as error:
+            state["status"] = "failed"
+            state["return_code"] = int(error.returncode)
+            state["failure_reason"] = "command_failed"
+            if stage_key is not None:
+                state["failed_stage"] = stage_key
+            state["updated_at"] = utc_now()
+            write_json(state_path, state)
+            raise
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,6 +103,30 @@ def stage_plan(registry: dict) -> list[tuple[str, str, dict, tuple[str, str] | N
 
 def checkpoint_path(run_root: Path, model_id: str, stage: str, name: str = "best.pt") -> Path:
     return run_root / "training" / model_id / stage / "checkpoints" / name
+
+
+def resolve_stage_batch_size(settings: dict, default_batch_size: int) -> int:
+    batch_size = int(settings.get("batch_size", default_batch_size))
+    if batch_size <= 0:
+        raise ValueError("stage batch_size must be positive")
+    return batch_size
+
+
+def benchmark_report_path(
+    run_root: Path, model_id: str, stage: str, batch_size: int
+) -> Path:
+    return run_root / "benchmarks" / f"{model_id}-{stage}-batch-{batch_size}.json"
+
+
+def benchmark_memory(report: dict, memory_limit_gib: float) -> dict:
+    reserved_bytes = int(report["peak_cuda_memory_reserved_bytes"])
+    limit_bytes = int(memory_limit_gib * 1024**3)
+    return {
+        "reserved_bytes": reserved_bytes,
+        "reserved_gib": reserved_bytes / 1024**3,
+        "limit_gib": float(memory_limit_gib),
+        "passed": reserved_bytes <= limit_bytes,
+    }
 
 
 def main() -> int:
@@ -124,11 +176,23 @@ def main() -> int:
         manifest_entries = int(load_json(quality_manifest)["entry_count"])
     validation_every_examples = int(math.ceil(manifest_entries / 4))
 
-    batch_size = args.batch_size
-    if not args.skip_benchmark:
-        benchmark_dir = run_root / "benchmarks"
-        for model_id in registry["models"]:
-            report = benchmark_dir / f"{model_id}-batch-{batch_size}.json"
+    state["batch_size"] = args.batch_size
+    state["dataset_segments"] = manifest_entries
+    state["validation_every_examples"] = validation_every_examples
+    write_json(state_path, state)
+
+    for model_id, stage, settings, parent in stage_plan(registry):
+        stage_key = f"{model_id}/{stage}"
+        experiment_dir = run_root / "training" / model_id / stage
+        complete_path = experiment_dir / "complete.json"
+        if complete_path.is_file():
+            if stage_key not in state["completed_stages"]:
+                state["completed_stages"].append(stage_key)
+            continue
+        stage_batch_size = resolve_stage_batch_size(settings, args.batch_size)
+        state.setdefault("stage_batch_sizes", {})[stage_key] = stage_batch_size
+        if not args.skip_benchmark:
+            report = benchmark_report_path(run_root, model_id, stage, stage_batch_size)
             if not report.is_file():
                 run(
                     [
@@ -139,9 +203,9 @@ def main() -> int:
                         "--model-id",
                         model_id,
                         "--stage",
-                        "controls",
+                        stage,
                         "--batch-size",
-                        str(batch_size),
+                        str(stage_batch_size),
                         "--warmup-steps",
                         "3",
                         "--timed-steps",
@@ -160,24 +224,26 @@ def main() -> int:
                     state,
                     state_path,
                     args.dry_run,
+                    operation="benchmark",
+                    stage_key=stage_key,
+                    stage_batch_size=stage_batch_size,
                 )
             if report.is_file():
-                reserved = int(load_json(report)["peak_cuda_memory_reserved_bytes"])
-                if reserved > args.memory_limit_gib * 1024**3:
-                    batch_size = min(batch_size, 6)
-    state["batch_size"] = batch_size
-    state["dataset_segments"] = manifest_entries
-    state["validation_every_examples"] = validation_every_examples
-    write_json(state_path, state)
-
-    for model_id, stage, settings, parent in stage_plan(registry):
-        stage_key = f"{model_id}/{stage}"
-        experiment_dir = run_root / "training" / model_id / stage
-        complete_path = experiment_dir / "complete.json"
-        if complete_path.is_file():
-            if stage_key not in state["completed_stages"]:
-                state["completed_stages"].append(stage_key)
-            continue
+                memory = benchmark_memory(load_json(report), args.memory_limit_gib)
+                memory["report"] = str(report)
+                memory["batch_size"] = stage_batch_size
+                state.setdefault("stage_benchmarks", {})[stage_key] = memory
+                write_json(state_path, state)
+                if not memory["passed"]:
+                    state["status"] = "failed"
+                    state["failed_stage"] = stage_key
+                    state["failure_reason"] = "memory_preflight_exceeded"
+                    state["updated_at"] = utc_now()
+                    write_json(state_path, state)
+                    raise RuntimeError(
+                        f"{stage_key} reserves {memory['reserved_gib']:.2f} GiB, "
+                        f"above the {args.memory_limit_gib:.2f} GiB limit"
+                    )
         command = [
             args.python,
             str(ROOT / "train.py"),
@@ -200,7 +266,7 @@ def main() -> int:
             "--steps-per-epoch",
             "0",
             "--batch-size",
-            str(batch_size),
+            str(stage_batch_size),
             "--lr",
             str(float(settings["learning_rate"])),
             "--sampling-mode",
@@ -238,7 +304,15 @@ def main() -> int:
             if not parent_checkpoint.is_file() and not args.dry_run:
                 raise FileNotFoundError(f"parent checkpoint is missing: {parent_checkpoint}")
             command.extend(("--finetune-from", str(parent_checkpoint)))
-        run(command, state, state_path, args.dry_run)
+        run(
+            command,
+            state,
+            state_path,
+            args.dry_run,
+            operation="train",
+            stage_key=stage_key,
+            stage_batch_size=stage_batch_size,
+        )
         best_checkpoint = checkpoint_path(run_root, model_id, stage)
         if not best_checkpoint.is_file() and not args.dry_run:
             raise FileNotFoundError(f"training completed without best checkpoint: {best_checkpoint}")
@@ -249,12 +323,16 @@ def main() -> int:
                     "schema": "ddsp-piano-training-stage-completion/v1",
                     "model_id": model_id,
                     "stage": stage,
+                    "batch_size": stage_batch_size,
                     "best_checkpoint": str(best_checkpoint),
                     "completed_at": utc_now(),
                 },
             )
         if stage_key not in state["completed_stages"]:
             state["completed_stages"].append(stage_key)
+        state["active_stage"] = None
+        state["active_operation"] = None
+        state.pop("stage_batch_size", None)
         write_json(state_path, state)
 
     sources = {

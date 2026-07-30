@@ -8,13 +8,14 @@
 | 模型 | Controls | Pitch | Refine / Calibrate |
 | --- | --- | --- | --- |
 | `paper_ir` | 2 次覆盖，legacy，`1e-3` | 1 次，`1e-5` | 1 次，`1e-4` |
-| `film_fdn` | 2 次覆盖，legacy，`1e-3` | 1 次，`1e-5` | 1 次，`1e-4` |
+| `film_fdn` | 2 次覆盖，legacy，`1e-3` | 1 次，`1e-5` | 1 次，`1e-4`，batch 6 |
 | `calibrated_ir` | 继承 `paper_ir` | 继承 pitch | 1 次 perceptual_v2，`3e-4`，冻结 IR |
-| `calibrated_film_ir` | 2 次覆盖，perceptual_v2，`3e-4` | 1 次，`1e-5` | 1 次，`1e-4` |
+| `calibrated_film_ir` | 2 次覆盖，perceptual_v2，`3e-4` | 1 次，`1e-5` | 1 次，`1e-4`，batch 6 |
 
-每次覆盖保证所有训练片段恰好出现一次，随后追加 20% 逆分层权重样本。默认 batch 8、FP16 AMP、
-vectorized synthesis、fused Adam、2% warmup、cosine decay 和梯度裁剪 1.0。预计总耗时为
-48 到 72 GPU 小时。
+每次覆盖保证所有训练片段恰好出现一次，随后追加 20% 逆分层权重样本。默认 batch 8；实测
+`film_fdn/refine` 在 batch 8 超过 31 GiB，因此两个高显存 refine 阶段固定使用 batch 6，其余阶段
+保持 batch 8。训练继续使用 FP16 AMP、vectorized synthesis、fused Adam、2% warmup、cosine decay
+和梯度裁剪 1.0。
 
 训练默认写入 TensorBoard event 文件；每个模型阶段单独位于
 `<experiment-dir>/tensorboard/`，同时保留 `metrics.jsonl`。TensorBoard 只负责过程观察，模型质量

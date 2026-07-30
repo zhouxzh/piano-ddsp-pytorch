@@ -1,0 +1,110 @@
+{
+  "schema": "ddsp-piano-release/v1",
+  "release": "model-suite-v1.1.0-rc1",
+  "deployment_contract": {
+    "dtype": "FP32",
+    "opset": 13,
+    "batch_size": 1,
+    "frames_per_call": 1,
+    "frame_rate": 250,
+    "sample_rate": 16000,
+    "audio_samples_per_call": 64,
+    "max_polyphony": 16,
+    "release_frames": 250,
+    "dsp_location": "host"
+  },
+  "models": {
+    "paper_ir": {
+      "display_name": "Paper IR",
+      "architecture": "paper",
+      "lineage": "model-suite-v1.0.0 paper_ir architecture; quality-first full retraining",
+      "quality_status": "candidate_human_review_pending",
+      "assets": {
+        "ddsp_piano_paper_ir.pt": {
+          "bytes": 6315412,
+          "sha256": "acbea4f677a98b19559cee6ca0b9373a023afeee31a37346e442c09e9989930d"
+        },
+        "ddsp_piano_paper_ir.onnx": {
+          "bytes": 2201971,
+          "sha256": "20f33a619eb7d1accbd3a710c1bda305771a168b16e9134cd92118009986d22b"
+        },
+        "ddsp_piano_paper_ir.json": {
+          "bytes": 5321,
+          "sha256": "2ef313e8c43892c9960a53dae3bd8bfbfb1c1ace6cddceef3ed51f7321f989ba"
+        }
+      },
+      "source_checkpoint_sha256": "5c20675c4539649cdd72abb90f3bdd8fa99b308bb1eceb68109edd0bc6c07910",
+      "model_state_sha256": "9d46b6fa4093d61cdaee36ad42f84bb41f4287705b7f43853deaf86a11b12b53",
+      "published_checkpoint_sha256": "acbea4f677a98b19559cee6ca0b9373a023afeee31a37346e442c09e9989930d"
+    },
+    "film_fdn": {
+      "display_name": "FiLM FDN",
+      "architecture": "configurable",
+      "lineage": "model-suite-v1.0.0 film_fdn architecture; quality-first full retraining",
+      "quality_status": "candidate_human_review_pending",
+      "assets": {
+        "ddsp_piano_film_fdn.pt": {
+          "bytes": 4297119,
+          "sha256": "e1c686c4ad2ea48f0d5d28a0a63acc828daf030d83a567045f1a81f19fe643f0"
+        },
+        "ddsp_piano_film_fdn.onnx": {
+          "bytes": 1430884,
+          "sha256": "fc237947eede19234f648b1a5eef8cc383c959103a96dc8704cc91268ed25d2e"
+        },
+        "ddsp_piano_film_fdn.json": {
+          "bytes": 5382,
+          "sha256": "77669d64803a5a6344ba395cdd90a25da46db06095704fcdc3b29a943ec6104e"
+        }
+      },
+      "source_checkpoint_sha256": "5f99c80392ce704b2f9574836ffb457ce24cb3d2c3f3938ea6de1ec45c7ec880",
+      "model_state_sha256": "584e857007a5001d7993b739618d9342ba95c1584976f442109a1ff94f5f2f8b",
+      "published_checkpoint_sha256": "e1c686c4ad2ea48f0d5d28a0a63acc828daf030d83a567045f1a81f19fe643f0"
+    },
+    "calibrated_ir": {
+      "display_name": "Calibrated IR",
+      "architecture": "configurable",
+      "lineage": "model-suite-v1.1.0-rc1 paper_ir refine checkpoint; perceptual calibration",
+      "quality_status": "candidate_human_review_pending",
+      "assets": {
+        "ddsp_piano_calibrated_ir.pt": {
+          "bytes": 4395263,
+          "sha256": "ebb103add129854b1cc9523cbbc61f2941a63243667243e521dd01fee0d03176"
+        },
+        "ddsp_piano_calibrated_ir.onnx": {
+          "bytes": 2201971,
+          "sha256": "13a46fd7c1494f6b8c1d3033fbb59bb38d28e34b5950039ea5a2e0df7a3d7566"
+        },
+        "ddsp_piano_calibrated_ir.json": {
+          "bytes": 5758,
+          "sha256": "ae15a449e2728aeaf1036a86f7ac1eefa3ed54059bd689552a4213ae1564a23d"
+        }
+      },
+      "source_checkpoint_sha256": "8cbd74534577ad1a71b8fafce8c641def9bb4165c50df1ad43351683e694ff36",
+      "model_state_sha256": "5c661d0445d44b2e51bbeb83eee955d24e6ed20af726400a8e3fec3337dfc2a1",
+      "published_checkpoint_sha256": "ebb103add129854b1cc9523cbbc61f2941a63243667243e521dd01fee0d03176"
+    },
+    "calibrated_film_ir": {
+      "display_name": "Calibrated FiLM IR",
+      "architecture": "configurable",
+      "lineage": "model-suite-v1.0.0 calibrated_film_ir architecture; quality-first full retraining",
+      "quality_status": "candidate_human_review_pending",
+      "assets": {
+        "ddsp_piano_calibrated_film_ir.pt": {
+          "bytes": 7128903,
+          "sha256": "47f4c931f722a2e028b4309d58b9129354c470d2414b0e11b4ac831979e0430c"
+        },
+        "ddsp_piano_calibrated_film_ir.onnx": {
+          "bytes": 2470034,
+          "sha256": "be952457240ea18d66b2243c8d5205f580eb364b83b507d7d1f36a70731785d3"
+        },
+        "ddsp_piano_calibrated_film_ir.json": {
+          "bytes": 5781,
+          "sha256": "f2fd5b2102df2caf4c01da9e7566dc18ca0b06f78c7cde06c78cedbbfdb17ba3"
+        }
+      },
+      "source_checkpoint_sha256": "2d3d3f8eae56e0e9f28d30b3f1c680b4559f91b11d207cbb771d97cbed716f46",
+      "model_state_sha256": "94f7d709e38ad1d063cfdb7dbf29f19457c6e5b13292a2f6a138d05b4cd1b89e",
+      "published_checkpoint_sha256": "47f4c931f722a2e028b4309d58b9129354c470d2414b0e11b4ac831979e0430c"
+    }
+  }
+}
