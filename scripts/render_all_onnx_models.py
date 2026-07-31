@@ -92,7 +92,7 @@ def _write_index(path: Path, index: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--model-dir", type=Path, default=Path("artifacts/model-suite-v1.0.0")
+        "--model-dir", type=Path, default=Path("artifacts/model-suite-v1.0.1")
     )
     parser.add_argument("--midi-dir", type=Path, default=Path("midi"))
     parser.add_argument(

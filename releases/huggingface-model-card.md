@@ -22,15 +22,15 @@ not a quality ranking:
 
 | Model ID | Architecture | Reverb output |
 | --- | --- | --- |
-| `paper_ir` | DAFx22 paper-style control networks | learned IR |
-| `film_fdn` | MAESTRO v2 FiLM/deep control networks | FDN controls |
-| `calibrated_ir` | paper-derived controls with perceptual calibration | learned IR |
-| `calibrated_film_ir` | FiLM/deep controls with perceptual calibration | learned IR |
+| `gru_ir_96_64` | recurrent context and monophonic controls | learned IR |
+| `film_fdn_128_96` | MAESTRO v2 FiLM/deep control networks | FDN controls |
+| `gru_ir_fullwet_96_64` | recurrent controls with perceptual calibration | learned IR |
+| `film_ir_fullwet_96_64` | FiLM/deep controls with perceptual calibration | learned IR |
 
 ## Intended Use
 
 This repository is reserved for real-time MIDI piano synthesis models targeting
-the Ascend 310 product family. The current `model-suite-v1.0.0` contract targets
+the Ascend 310 product family. The current `model-suite-v1.0.1` contract targets
 Ascend 310B specifically. It does not claim compatibility with later 310
 devices until a separate hardware and CANN validation is published. The ONNX
 files are controlled conversion inputs for the downstream CANN/OM workflow.
@@ -60,9 +60,9 @@ Download an immutable release and verify it:
 
 ```bash
 HF_ENDPOINT=https://huggingface.co hf download zhouxzh/piano-ddsp-ascend310 \
-  --revision model-suite-v1.0.0 \
-  --local-dir artifacts/model-suite-v1.0.0
-cd artifacts/model-suite-v1.0.0
+  --revision model-suite-v1.0.1 \
+  --local-dir artifacts/model-suite-v1.0.1
+cd artifacts/model-suite-v1.0.1
 sha256sum -c SHA256SUMS
 ```
 

@@ -122,7 +122,6 @@ def _html(trials: list[dict], evaluation_id: str, deadline: str | None) -> str:
         for trial in trials
     ]
     payload = json.dumps(public_trials, ensure_ascii=False)
-    dimensions = json.dumps(DIMENSIONS)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -130,7 +129,7 @@ def _html(trials: list[dict], evaluation_id: str, deadline: str | None) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DDSP-Piano Blind Listening</title>
 <style>
-:root {{ color-scheme: light; --ink:#191c1d; --muted:#687076; --line:#d9dddf; --paper:#f6f7f5; --accent:#176b4d; --warn:#a13d2d; }}
+:root {{ color-scheme: light; --ink:#191c1d; --muted:#687076; --line:#d9dddf; --paper:#f6f7f5; --accent:#176b4d; }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0; background:var(--paper); color:var(--ink); font:15px/1.45 system-ui,sans-serif; letter-spacing:0; }}
 header {{ border-bottom:1px solid var(--line); background:#fff; }}
@@ -147,20 +146,13 @@ main {{ padding:28px 0 48px; }}
 .player {{ border-top:3px solid var(--ink); padding-top:12px; }}
 .player h2 {{ font-size:16px; margin:0 0 8px; }}
 audio {{ width:100%; }}
-.preference {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:22px 0; }}
+.preference {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:22px 0 0; }}
 button {{ border:1px solid var(--line); background:#fff; color:var(--ink); min-height:42px; border-radius:6px; cursor:pointer; font-weight:650; }}
 button[aria-pressed="true"] {{ background:var(--accent); color:#fff; border-color:var(--accent); }}
 button:disabled {{ cursor:default; opacity:.4; }}
-.ratings {{ display:grid; grid-template-columns:110px 1fr 1fr; gap:10px 16px; align-items:center; }}
-.ratings strong {{ font-size:13px; }}
-input[type="range"] {{ width:100%; accent-color:var(--accent); }}
-.rating-control {{ display:grid; grid-template-columns:1fr 24px; gap:8px; align-items:center; }}
-.rating-control output {{ color:var(--muted); text-align:right; font-variant-numeric:tabular-nums; }}
-.flags {{ display:flex; gap:24px; margin:20px 0; color:var(--warn); }}
-textarea {{ width:100%; min-height:72px; resize:vertical; border:1px solid var(--line); border-radius:6px; padding:10px; font:inherit; }}
 .actions {{ display:flex; justify-content:space-between; gap:10px; margin-top:18px; }}
 .primary {{ background:var(--ink); color:#fff; border-color:var(--ink); padding:0 18px; }}
-@media (max-width:700px) {{ .players {{ grid-template-columns:1fr; }} .ratings {{ grid-template-columns:80px 1fr 1fr; gap:10px 8px; }} .rating-control {{ grid-template-columns:1fr 18px; gap:4px; }} .trial {{ padding:16px; }} }}
+@media (max-width:700px) {{ .players {{ grid-template-columns:1fr; }} .trial {{ padding:16px; }} }}
 </style>
 </head>
 <body>
@@ -168,30 +160,24 @@ textarea {{ width:100%; min-height:72px; resize:vertical; border:1px solid var(-
 <main><section class="trial" id="trial"></section></main>
 <script>
 const schema={json.dumps(LISTENING_SCHEMA)}, evaluationId={json.dumps(evaluation_id)}, deadline={json.dumps(deadline)};
-const trials={payload}, dimensions={dimensions};
-const labels={{timbre:'音色',attack:'起音',dynamics:'力度',sustain:'延音',reverb:'混响',artifacts:'纯净度'}};
+const trials={payload};
 const key='ddsp-piano-listening:'+evaluationId;
 let state=JSON.parse(localStorage.getItem(key)||'{{"index":0,"answers":{{}}}}');
 const root=document.getElementById('trial'), progress=document.getElementById('progress');
 document.getElementById('deadline').textContent=deadline?'截止 '+new Date(deadline).toLocaleString():'等待全部训练完成后开启';
 function esc(value) {{ const el=document.createElement('span'); el.textContent=value; return el.innerHTML; }}
-function emptyAnswer() {{ const ratings={{}},rating_touched={{}}; dimensions.forEach(d=>{{ratings[d]={{A:3,B:3}};rating_touched[d]={{A:false,B:false}};}}); return {{preference:null,ratings,rating_touched,severe_artifact:{{A:false,B:false}},notes:''}}; }}
+function emptyAnswer() {{ return {{preference:null}}; }}
 function save() {{ localStorage.setItem(key,JSON.stringify(state)); }}
 function render() {{
   const t=trials[state.index], a=state.answers[t.id]||emptyAnswer(); state.answers[t.id]=a;
   progress.textContent=`${{state.index+1}} / ${{trials.length}}`;
-  const control=(d,side)=>`<label class="rating-control"><input aria-label="${{labels[d]}} ${{side}}" data-d="${{d}}" data-side="${{side}}" type="range" min="1" max="5" value="${{a.ratings[d][side]}}"><output>${{a.ratings[d][side]}}</output></label>`;
-  const rows=dimensions.map(d=>`<strong>${{labels[d]}}</strong>${{control(d,'A')}}${{control(d,'B')}}`).join('');
-  root.innerHTML=`<div class="meta"><strong>${{esc(t.title)}}</strong><span class="mode">${{t.mode==='fixed_gain'?'固定增益':'响度匹配'}}</span></div><div class="players"><div class="player"><h2>A</h2><audio controls preload="metadata" src="${{t.a}}"></audio></div><div class="player"><h2>B</h2><audio controls preload="metadata" src="${{t.b}}"></audio></div></div><div class="preference"><button data-pref="A" aria-pressed="${{a.preference==='A'}}">A</button><button data-pref="tie" aria-pressed="${{a.preference==='tie'}}">平局</button><button data-pref="B" aria-pressed="${{a.preference==='B'}}">B</button></div><div class="ratings"><span></span><strong>A</strong><strong>B</strong>${{rows}}</div><div class="flags"><label><input data-flag="A" type="checkbox" ${{a.severe_artifact.A?'checked':''}}> A 严重缺陷</label><label><input data-flag="B" type="checkbox" ${{a.severe_artifact.B?'checked':''}}> B 严重缺陷</label></div><textarea placeholder="备注">${{esc(a.notes)}}</textarea><div class="actions"><button id="previous" ${{state.index===0?'disabled':''}}>上一项</button><button class="primary" id="next">${{state.index===trials.length-1?'导出评分':'下一项'}}</button></div>`;
+  root.innerHTML=`<div class="meta"><strong>${{esc(t.title)}}</strong><span class="mode">${{t.mode==='fixed_gain'?'固定增益':'响度匹配'}}</span></div><div class="players"><div class="player"><h2>A</h2><audio controls preload="metadata" src="${{t.a}}"></audio></div><div class="player"><h2>B</h2><audio controls preload="metadata" src="${{t.b}}"></audio></div></div><div class="preference"><button data-pref="A" aria-pressed="${{a.preference==='A'}}">更喜欢 A</button><button data-pref="tie" aria-pressed="${{a.preference==='tie'}}">无明显差别</button><button data-pref="B" aria-pressed="${{a.preference==='B'}}">更喜欢 B</button></div><div class="actions"><button id="previous" ${{state.index===0?'disabled':''}}>上一项</button><button class="primary" id="next">${{state.index===trials.length-1?'导出结果':'下一项'}}</button></div>`;
   root.querySelectorAll('[data-pref]').forEach(el=>el.onclick=()=>{{a.preference=el.dataset.pref;save();render();}});
-  root.querySelectorAll('input[type=range]').forEach(el=>el.oninput=()=>{{a.ratings[el.dataset.d][el.dataset.side]=Number(el.value);a.rating_touched=a.rating_touched||{{}};a.rating_touched[el.dataset.d]=a.rating_touched[el.dataset.d]||{{A:false,B:false}};a.rating_touched[el.dataset.d][el.dataset.side]=true;el.nextElementSibling.value=el.value;save();}});
-  root.querySelectorAll('[data-flag]').forEach(el=>el.onchange=()=>{{a.severe_artifact[el.dataset.flag]=el.checked;save();}});
-  root.querySelector('textarea').oninput=e=>{{a.notes=e.target.value;save();}};
   root.querySelector('#previous').onclick=()=>{{state.index=Math.max(0,state.index-1);save();render();}};
   root.querySelector('#next').onclick=()=>{{if(!a.preference){{alert('请选择 A、B 或平局');return;}} if(state.index<trials.length-1){{state.index++;save();render();}}else{{download();}}}};
 }}
 function download() {{
-  const answers=trials.map(t=>Object.assign({{trial_id:t.id}},state.answers[t.id]||emptyAnswer()));
+  const answers=trials.map(t=>({{trial_id:t.id,preference:(state.answers[t.id]||{{}}).preference||null}}));
   if(answers.some(a=>!a.preference)){{alert('仍有未完成项目');return;}}
   const data={{schema,evaluation_id:evaluationId,completed_at:new Date().toISOString(),trials:answers}};
   const blob=new Blob([JSON.stringify(data,null,2)],{{type:'application/json'}}), link=document.createElement('a');
@@ -310,13 +296,17 @@ def activate_review(report_dir: Path, timeout_minutes: int) -> dict:
     review = report.get("human_review")
     if not review:
         raise ValueError("The report has no listening task")
-    if review.get("status") != "prepared":
-        return report
     if timeout_minutes < 0:
         raise ValueError("Review timeout must be non-negative")
     manifest = read_json(report_dir / "listening" / "trials.json")
     if manifest.get("evaluation_id") != report.get("evaluation_id"):
         raise ValueError("Listening trial manifest belongs to another evaluation")
+    if review.get("status") != "prepared":
+        (report_dir / "listening" / "index.html").write_text(
+            _html(manifest["trials"], report["evaluation_id"], review.get("deadline")),
+            encoding="utf-8",
+        )
+        return report
     activated = datetime.now(timezone.utc)
     deadline = (activated + timedelta(minutes=timeout_minutes)).isoformat()
     review.update(
@@ -378,20 +368,24 @@ def finalize_review(report_dir: Path, scores_path: Path, config: dict) -> dict:
             points += 0.5
         elif trial_map[preference] == "candidate":
             points += 1.0
-        for dimension in DIMENSIONS:
-            ratings = entry["ratings"][dimension]
-            candidate_side = "A" if trial_map["A"] == "candidate" else "B"
-            baseline_side = "B" if candidate_side == "A" else "A"
-            touched = entry.get("rating_touched")
-            if touched is None or (
-                bool(touched.get(dimension, {}).get(candidate_side))
-                and bool(touched.get(dimension, {}).get(baseline_side))
-            ):
-                dimension_deltas[dimension].append(
-                    float(ratings[candidate_side]) - float(ratings[baseline_side])
-                )
+        ratings = entry.get("ratings")
+        touched = entry.get("rating_touched")
+        if ratings is not None:
+            for dimension in DIMENSIONS:
+                dimension_ratings = ratings[dimension]
+                candidate_side = "A" if trial_map["A"] == "candidate" else "B"
+                baseline_side = "B" if candidate_side == "A" else "A"
+                if touched is None or (
+                    bool(touched.get(dimension, {}).get(candidate_side))
+                    and bool(touched.get(dimension, {}).get(baseline_side))
+                ):
+                    dimension_deltas[dimension].append(
+                        float(dimension_ratings[candidate_side])
+                        - float(dimension_ratings[baseline_side])
+                    )
         candidate_side = "A" if trial_map["A"] == "candidate" else "B"
-        repeated_artifacts += int(bool(entry["severe_artifact"][candidate_side]))
+        severe_artifact = entry.get("severe_artifact", {})
+        repeated_artifacts += int(bool(severe_artifact.get(candidate_side, False)))
 
     preference_rate = points / len(expected)
     mean_deltas = {

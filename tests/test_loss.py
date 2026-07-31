@@ -4,10 +4,21 @@ import unittest
 
 import torch
 
-from ddsp_piano.modules.loss import HybridLoss
+from ddsp_piano.modules.loss import HybridLoss, ReverbRegularizer
 
 
 class LossTest(unittest.TestCase):
+    def test_mean_reverb_regularizer_is_independent_of_ir_length(self) -> None:
+        regularizer = ReverbRegularizer(weight=0.1, reduction="mean")
+        short = regularizer(torch.ones(2, 8))
+        long = regularizer(torch.ones(2, 24_000))
+        self.assertAlmostEqual(float(short), 0.1, places=6)
+        self.assertAlmostEqual(float(long), 0.1, places=6)
+
+    def test_legacy_reverb_regularizer_preserves_sum_semantics(self) -> None:
+        regularizer = ReverbRegularizer(weight=0.1, reduction="sum_per_sample")
+        self.assertAlmostEqual(float(regularizer(torch.ones(2, 8))), 0.8, places=6)
+
     def test_energy_and_onset_components_are_trainable(self) -> None:
         prediction = torch.zeros(1, 2048, requires_grad=True)
         target = torch.linspace(-0.2, 0.2, 2048).reshape(1, -1)

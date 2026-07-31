@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--maestro-root", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path, default=Path("cache"))
     parser.add_argument("--experiment-dir", type=Path, default=Path("runs/piano_16k"))
-    parser.add_argument("--model-id", default="paper_ir")
+    parser.add_argument("--model-id", default="gru_ir_96_64")
     parser.add_argument("--registry", type=Path, help="Model-suite registry; defaults to the stable release")
     parser.add_argument("--prepare", action="store_true", help="Build missing track caches before training")
     parser.add_argument("--prepare-only", action="store_true", help="Build caches then exit")
@@ -139,6 +139,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-loss-weight", type=float, default=0.7)
     parser.add_argument("--wet-loss-weight", type=float, default=0.3)
     parser.add_argument("--reverb-regularizer-weight", type=float, default=0.05)
+    parser.add_argument(
+        "--reverb-regularizer-reduction",
+        choices=("sum_per_sample", "mean"),
+        default="sum_per_sample",
+        help=(
+            "IR regularizer reduction. Existing releases use sum_per_sample; "
+            "new learned-IR training should use length-independent mean."
+        ),
+    )
     parser.add_argument("--n-harmonics", type=int)
     parser.add_argument("--n-noise-bands", type=int)
     parser.add_argument("--reverb-type", choices=("auto", "ir", "fdn"), default="auto")
@@ -1022,6 +1031,7 @@ def main() -> int:
         dry_weight=args.dry_loss_weight,
         wet_weight=args.wet_loss_weight,
         reverb_mode=args.reverb_type,
+        reverb_regularizer_reduction=args.reverb_regularizer_reduction,
         energy_weight=args.energy_loss_weight,
         onset_weight=args.onset_loss_weight,
         centroid_weight=args.centroid_loss_weight,

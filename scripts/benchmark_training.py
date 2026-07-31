@@ -25,7 +25,7 @@ from train import velocity_counterfactual_loss
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-id", default="calibrated_ir")
+    parser.add_argument("--model-id", default="gru_ir_fullwet_96_64")
     parser.add_argument("--registry", type=Path)
     parser.add_argument(
         "--stage",

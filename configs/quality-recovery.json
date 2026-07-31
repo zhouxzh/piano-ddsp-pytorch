@@ -1,0 +1,48 @@
+{
+  "schema": "ddsp-piano-quality-recovery/v1",
+  "baseline_registry": "ddsp_piano/model-suite-v1.0.1.json",
+  "baseline_dir": "artifacts/model-suite-v1.0.1",
+  "run_root": "runs/model-suite-v1.1.1-recovery",
+  "quality_manifest": "cache/maestro-v3.0.0/quality-v1.1.json",
+  "models": {
+    "gru_ir_96_64": {"batch_size": 8, "pilot_learning_rate": 0.00001, "full_learning_rate": 0.000005},
+    "film_fdn_128_96": {"batch_size": 6, "pilot_learning_rate": 0.00001, "full_learning_rate": 0.000005},
+    "gru_ir_fullwet_96_64": {"batch_size": 8, "pilot_learning_rate": 0.000005, "full_learning_rate": 0.000003},
+    "film_ir_fullwet_96_64": {"batch_size": 6, "pilot_learning_rate": 0.000005, "full_learning_rate": 0.000003}
+  },
+  "pilot": {
+    "epochs": 1,
+    "steps_per_epoch": 2000,
+    "validation_batches": 64
+  },
+  "full": {
+    "enabled": true,
+    "epochs": 1,
+    "steps_per_epoch": 0,
+    "validation_batches": 0
+  },
+  "pilot_promotion": {
+    "max_composite_median": 1.0,
+    "max_wet_dry_factor": 1.25,
+    "max_latency_ratio": 1.05,
+    "max_regressed_groups": 3,
+    "max_worst_group_median": 1.11
+  },
+  "final_promotion": {
+    "max_composite_median": 0.98,
+    "max_wet_dry_factor": 1.25,
+    "max_latency_ratio": 1.05,
+    "max_regressed_groups": 0,
+    "max_worst_group_median": 1.05
+  },
+  "training": {
+    "stage": "controls",
+    "freeze_reverb": true,
+    "reverb_regularizer_reduction": "mean",
+    "sampling_mode": "coverage",
+    "curriculum_tail_fraction": 0.2,
+    "train_workers": 8,
+    "validation_workers": 2,
+    "log_every": 100
+  }
+}

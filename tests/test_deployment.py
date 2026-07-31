@@ -162,7 +162,7 @@ class DeploymentTest(unittest.TestCase):
             ],
         )
 
-    def test_film_fdn_contract_uses_deep_outputs_and_fdn_controls(self) -> None:
+    def test_film_fdn_128_96_contract_uses_deep_outputs_and_fdn_controls(self) -> None:
         model = build_configurable_model(
             n_synths=16,
             n_piano_models=1,

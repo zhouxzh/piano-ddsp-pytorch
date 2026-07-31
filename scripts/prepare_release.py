@@ -130,6 +130,7 @@ def main() -> int:
     manifest: dict[str, Any] = {
         "schema": "ddsp-piano-release/v1",
         "release": registry.release,
+        "default_model_id": registry.default_model_id,
         "deployment_contract": registry.deployment_contract,
         "models": {},
     }

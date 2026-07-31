@@ -16,6 +16,7 @@ class HybridLoss(nn.Module):
         peak_weight=0.01,
         tail_weight=0.02,
         reverb_mode='ir',
+        reverb_regularizer_reduction="sum_per_sample",
         energy_weight=0.0,
         onset_weight=0.0,
         centroid_weight=0.0,
@@ -32,7 +33,11 @@ class HybridLoss(nn.Module):
         self.phase = phase 
 
         self.mssLoss = MSSLoss(n_ffts, transform_layout=spectral_layout)
-        self.reverb_l1_loss = ReverbRegularizer(weight, loss_type)
+        self.reverb_l1_loss = ReverbRegularizer(
+            weight,
+            loss_type,
+            reduction=reverb_regularizer_reduction,
+        )
         self.l1_weight_of_inharm = l1_weight_of_inharm
         self.dry_weight = float(dry_weight)
         self.wet_weight = float(wet_weight)
@@ -397,16 +402,30 @@ class ReverbRegularizer(nn.Module):
         - weight (float): loss weight.
         - loss_type {'L1', 'L2'}: compute L1 or L2 regularization.
     """
-    def __init__(self, weight=0.01, loss_type='L1'):
+    def __init__(
+        self,
+        weight=0.01,
+        loss_type='L1',
+        reduction="sum_per_sample",
+    ):
         super(ReverbRegularizer, self).__init__()
         if loss_type not in {'L1', 'L2'}:
             raise ValueError(f"loss_type must be 'L1' or 'L2', got {loss_type!r}")
+        if reduction not in {"sum_per_sample", "mean"}:
+            raise ValueError(
+                "reduction must be 'sum_per_sample' or 'mean', "
+                f"got {reduction!r}"
+            )
         self.weight = weight
         self.loss_type = loss_type
+        self.reduction = reduction
     def forward(self, reverb_ir):
         if self.loss_type == 'L1':
-            loss = torch.sum(torch.abs(reverb_ir))
+            values = torch.abs(reverb_ir)
         elif self.loss_type == 'L2':
-            loss = torch.sum(torch.square(reverb_ir))
-        loss /= reverb_ir.shape[0] # Divide by batch size
+            values = torch.square(reverb_ir)
+        if self.reduction == "mean":
+            loss = values.mean()
+        else:
+            loss = values.sum() / reverb_ir.shape[0]
         return self.weight * loss

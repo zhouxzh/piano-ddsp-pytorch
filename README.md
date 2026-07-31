@@ -5,19 +5,21 @@
 This repository trains, exports, and evaluates causal MIDI-conditioned piano
 control models specifically for later deployment on Ascend 310B. CPU and ONNX
 Runtime are reference validation paths, not additional deployment targets. Its
-first stable publication is the four-model
-`model-suite-v1.0.0`:
+current structure-named publication is the four-model
+`model-suite-v1.0.1`:
 
 | Model ID | Architecture | Harmonics / noise | Host reverb |
 | --- | --- | ---: | --- |
-| `paper_ir` | DAFx22 paper-style control networks | 96 / 64 | learned IR, wet 0.25 |
-| `film_fdn` | later MAESTRO v2 FiLM/deep network | 128 / 96 | FDN controls |
-| `calibrated_ir` | legacy controls with perceptual calibration | 96 / 64 | learned IR, wet 1.0 |
-| `calibrated_film_ir` | FiLM/deep/joint controls with perceptual calibration | 96 / 64 | learned IR, wet 1.0 |
+| `gru_ir_96_64` | recurrent context and monophonic control networks | 96 / 64 | learned IR, wet 0.25 |
+| `film_fdn_128_96` | later MAESTRO v2 FiLM/deep network | 128 / 96 | FDN controls |
+| `gru_ir_fullwet_96_64` | legacy controls with perceptual calibration | 96 / 64 | learned IR, wet 1.0 |
+| `film_ir_fullwet_96_64` | FiLM/deep/joint controls with perceptual calibration | 96 / 64 | learned IR, wet 1.0 |
 
 The names identify structures, not a quality ranking. All four models are
 formal downstream conversion candidates. Existing listening results do not
 justify selecting a single winner.
+The release default is `gru_ir_96_64`, selected as the most stable listening
+baseline rather than as a claim of universal superiority.
 
 ## Quick Start
 
@@ -30,21 +32,21 @@ pip install -r requirements.txt
 python -m unittest discover -v
 ```
 
-Download the `model-suite-v1.0.0` revision from the Hugging Face model
+Download the `model-suite-v1.0.1` revision from the Hugging Face model
 repository `zhouxzh/piano-ddsp-ascend310`, then verify it:
 
 ```bash
 HF_ENDPOINT=https://huggingface.co hf download zhouxzh/piano-ddsp-ascend310 \
-  --revision model-suite-v1.0.0 \
-  --local-dir artifacts/model-suite-v1.0.0
-cd artifacts/model-suite-v1.0.0
+  --revision model-suite-v1.0.1 \
+  --local-dir artifacts/model-suite-v1.0.1
+cd artifacts/model-suite-v1.0.1
 sha256sum -c SHA256SUMS
 ```
 
 Render a local MIDI file or start the browser listening service:
 
 ```bash
-python scripts/render_onnx.py --model-id paper_ir --midi path/to/input.mid --output output.wav
+python scripts/render_onnx.py --model-id gru_ir_96_64 --midi path/to/input.mid --output output.wav
 python scripts/realtime_midi_server.py --host 0.0.0.0 --port 8765
 ```
 
@@ -61,7 +63,17 @@ python scripts/train_model_suite.py
 
 It uses the separate `model-suite-v1.1.0-rc1` registry, explicit
 `controls/pitch/refine` stages, complete dataset coverage, and all ten MAESTRO
-recording-domain embeddings. The stable `v1.0.0` registry is not modified.
+recording-domain embeddings. That run completed but failed its objective and
+human preference gates, so the same stable weights remain in `v1.0.1` under
+the structure-based IDs.
+
+The guarded recovery experiment starts from the stable checkpoints, freezes
+their reverb, runs short pilots, and continues full coverage only for models
+that beat the baseline screening gates:
+
+```bash
+python scripts/train_quality_recovery.py
+```
 
 The exported graph is FP32 ONNX opset 13 with fixed batch 1, one 250 Hz frame,
 16 voices, 16 kHz audio, and explicit recurrent state. Harmonic phase,

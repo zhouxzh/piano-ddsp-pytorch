@@ -14,18 +14,22 @@
     "dsp_location": "host"
   },
   "legacy_names": {
-    "v1": "paper_ir",
-    "v2": "film_fdn",
-    "v2a": "calibrated_ir",
-    "v2b": "calibrated_film_ir"
+    "paper_ir": "gru_ir_96_64",
+    "v1": "gru_ir_96_64",
+    "film_fdn": "film_fdn_128_96",
+    "v2": "film_fdn_128_96",
+    "calibrated_ir": "gru_ir_fullwet_96_64",
+    "v2a": "gru_ir_fullwet_96_64",
+    "calibrated_film_ir": "film_ir_fullwet_96_64",
+    "v2b": "film_ir_fullwet_96_64"
   },
   "models": {
-    "paper_ir": {
-      "display_name": "Paper IR",
+    "gru_ir_96_64": {
+      "display_name": "GRU IR 96/64",
       "description": "DAFx22 architecture retrained with complete MAESTRO coverage and explicit detuning stages.",
-      "asset_basename": "ddsp_piano_paper_ir",
+      "asset_basename": "ddsp_piano_gru_ir_96_64",
       "architecture": "paper",
-      "lineage": "model-suite-v1.0.0 paper_ir architecture; quality-first full retraining",
+      "lineage": "model-suite-v1.0.0 gru_ir_96_64 architecture; quality-first full retraining",
       "quality_status": "candidate_human_review_pending",
       "model": {
         "n_harmonics": 96,
@@ -62,12 +66,12 @@
         }
       }
     },
-    "film_fdn": {
-      "display_name": "FiLM FDN",
+    "film_fdn_128_96": {
+      "display_name": "FiLM FDN 128/96",
       "description": "MAESTRO v2 FiLM/deep architecture retrained with complete coverage and explicit detuning stages.",
-      "asset_basename": "ddsp_piano_film_fdn",
+      "asset_basename": "ddsp_piano_film_fdn_128_96",
       "architecture": "configurable",
-      "lineage": "model-suite-v1.0.0 film_fdn architecture; quality-first full retraining",
+      "lineage": "model-suite-v1.0.0 film_fdn_128_96 architecture; quality-first full retraining",
       "quality_status": "candidate_human_review_pending",
       "model": {
         "n_harmonics": 128,
@@ -104,12 +108,12 @@
         }
       }
     },
-    "calibrated_ir": {
-      "display_name": "Calibrated IR",
-      "description": "The fully retrained Paper IR model calibrated with the perceptual objective while preserving its learned IR.",
-      "asset_basename": "ddsp_piano_calibrated_ir",
+    "gru_ir_fullwet_96_64": {
+      "display_name": "GRU IR Full-Wet 96/64",
+      "description": "The fully retrained GRU IR 96/64 model calibrated with the perceptual objective while preserving its learned IR.",
+      "asset_basename": "ddsp_piano_gru_ir_fullwet_96_64",
       "architecture": "configurable",
-      "lineage": "model-suite-v1.1.0-rc1 paper_ir refine checkpoint; perceptual calibration",
+      "lineage": "model-suite-v1.1.0-rc1 gru_ir_96_64 refine checkpoint; perceptual calibration",
       "quality_status": "candidate_human_review_pending",
       "model": {
         "n_harmonics": 96,
@@ -144,18 +148,18 @@
         "optimizer_implementation": "fused",
         "spectral_layout": "combined",
         "velocity_counterfactual_layout": "combined",
-        "parent_model": "paper_ir",
+        "parent_model": "gru_ir_96_64",
         "stage_schedule": {
           "calibrate": {"epochs": 1, "learning_rate": 0.0003}
         }
       }
     },
-    "calibrated_film_ir": {
-      "display_name": "Calibrated FiLM IR",
+    "film_ir_fullwet_96_64": {
+      "display_name": "FiLM IR Full-Wet 96/64",
       "description": "FiLM/deep/joint learned-IR architecture fully retrained with the perceptual objective.",
-      "asset_basename": "ddsp_piano_calibrated_film_ir",
+      "asset_basename": "ddsp_piano_film_ir_fullwet_96_64",
       "architecture": "configurable",
-      "lineage": "model-suite-v1.0.0 calibrated_film_ir architecture; quality-first full retraining",
+      "lineage": "model-suite-v1.0.0 film_ir_fullwet_96_64 architecture; quality-first full retraining",
       "quality_status": "candidate_human_review_pending",
       "model": {
         "n_harmonics": 96,

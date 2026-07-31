@@ -71,10 +71,10 @@ def _render_segment(model_path: Path, metadata: dict, segment, warm_up_seconds: 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline-id", default="paper_ir")
+    parser.add_argument("--baseline-id", default="gru_ir_96_64")
     parser.add_argument("--candidate-id", required=True)
     parser.add_argument(
-        "--artifacts-dir", type=Path, default=Path("artifacts/model-suite-v1.0.0")
+        "--artifacts-dir", type=Path, default=Path("artifacts/model-suite-v1.0.1")
     )
     parser.add_argument("--maestro-root", type=Path, required=True)
     parser.add_argument("--cache-dir", type=Path, required=True)

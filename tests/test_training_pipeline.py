@@ -24,24 +24,24 @@ class TrainingPipelineTest(unittest.TestCase):
             (model_id, stage): resolve_stage_batch_size(settings, 8)
             for model_id, stage, settings, _ in stage_plan(self.registry)
         }
-        self.assertEqual(batches[("film_fdn", "refine")], 6)
-        self.assertEqual(batches[("calibrated_film_ir", "refine")], 6)
+        self.assertEqual(batches[("film_fdn_128_96", "refine")], 6)
+        self.assertEqual(batches[("film_ir_fullwet_96_64", "refine")], 6)
         self.assertTrue(
             all(
                 batch_size == 8
                 for key, batch_size in batches.items()
                 if key
                 not in {
-                    ("film_fdn", "refine"),
-                    ("calibrated_film_ir", "refine"),
+                    ("film_fdn_128_96", "refine"),
+                    ("film_ir_fullwet_96_64", "refine"),
                 }
             )
         )
 
     def test_benchmark_report_is_stage_specific(self) -> None:
         self.assertEqual(
-            benchmark_report_path(Path("run"), "film_fdn", "refine", 6),
-            Path("run/benchmarks/film_fdn-refine-batch-6.json"),
+            benchmark_report_path(Path("run"), "film_fdn_128_96", "refine", 6),
+            Path("run/benchmarks/film_fdn_128_96-refine-batch-6.json"),
         )
 
     def test_memory_gate_uses_reserved_memory(self) -> None:
@@ -72,12 +72,12 @@ class TrainingPipelineTest(unittest.TestCase):
                         state_path,
                         False,
                         operation="train",
-                        stage_key="film_fdn/refine",
+                        stage_key="film_fdn_128_96/refine",
                         stage_batch_size=6,
                     )
             persisted = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertEqual(persisted["status"], "failed")
-        self.assertEqual(persisted["failed_stage"], "film_fdn/refine")
+        self.assertEqual(persisted["failed_stage"], "film_fdn_128_96/refine")
         self.assertEqual(persisted["return_code"], 7)
         self.assertEqual(persisted["failure_reason"], "command_failed")
 

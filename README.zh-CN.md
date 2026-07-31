@@ -3,18 +3,19 @@
 [English](README.md)
 
 本仓库用于训练、导出和测试专门面向 Ascend 310B 实时 MIDI 钢琴合成的 ONNX 神经控制模型。
-PyTorch CPU 和 ONNX Runtime 只是数值参考路径，不是额外的部署目标。首个正式发布为
-`model-suite-v1.0.0`，同时保留四个结构差异明显的模型：
+PyTorch CPU 和 ONNX Runtime 只是数值参考路径，不是额外的部署目标。当前结构化命名发布为
+`model-suite-v1.0.1`，同时保留四个结构差异明显的模型：
 
 | 模型 ID | 结构 | 谐波/噪声 | 宿主混响 |
 | --- | --- | ---: | --- |
-| `paper_ir` | DAFx22 论文结构 | 96 / 64 | 学习型 IR，wet 0.25 |
-| `film_fdn` | 后期 MAESTRO v2 FiLM/深层结构 | 128 / 96 | FDN 控制 |
-| `calibrated_ir` | 旧控制网络加感知损失标定 | 96 / 64 | 学习型 IR，wet 1.0 |
-| `calibrated_film_ir` | FiLM/深层/联合非谐性加感知标定 | 96 / 64 | 学习型 IR，wet 1.0 |
+| `gru_ir_96_64` | 循环上下文与单音控制网络 | 96 / 64 | 学习型 IR，wet 0.25 |
+| `film_fdn_128_96` | 后期 MAESTRO v2 FiLM/深层结构 | 128 / 96 | FDN 控制 |
+| `gru_ir_fullwet_96_64` | 旧控制网络加感知损失标定 | 96 / 64 | 学习型 IR，wet 1.0 |
+| `film_ir_fullwet_96_64` | FiLM/深层/联合非谐性加感知标定 | 96 / 64 | 学习型 IR，wet 1.0 |
 
 这些名称只描述结构，不表示音质排名。现有自动指标和人工试听不足以确定唯一胜者，因此四个模型都
 作为正式的 Ascend 310B 移植候选发布，待 OM 实机测试后再决定最终保留方案。
+默认模型为人工试听中表现较稳定的 `gru_ir_96_64`，这不表示它在所有曲目上都绝对优于其余模型。
 
 ## 快速开始
 
@@ -28,20 +29,20 @@ python -m unittest discover -v
 ```
 
 从 Hugging Face 模型仓库 `zhouxzh/piano-ddsp-ascend310` 下载
-`model-suite-v1.0.0` 版本，然后检查：
+`model-suite-v1.0.1` 版本，然后检查：
 
 ```bash
 HF_ENDPOINT=https://huggingface.co hf download zhouxzh/piano-ddsp-ascend310 \
-  --revision model-suite-v1.0.0 \
-  --local-dir artifacts/model-suite-v1.0.0
-cd artifacts/model-suite-v1.0.0
+  --revision model-suite-v1.0.1 \
+  --local-dir artifacts/model-suite-v1.0.1
+cd artifacts/model-suite-v1.0.1
 sha256sum -c SHA256SUMS
 ```
 
 渲染本地 MIDI 或启动网页实时试听：
 
 ```bash
-python scripts/render_onnx.py --model-id paper_ir --midi path/to/input.mid --output output.wav
+python scripts/render_onnx.py --model-id gru_ir_96_64 --midi path/to/input.mid --output output.wav
 python scripts/realtime_midi_server.py --host 0.0.0.0 --port 8765
 ```
 
@@ -56,15 +57,15 @@ CUDA 训练环境使用：
 pip install -r requirements-cuda.txt
 python scripts/check_environment.py --require-cuda
 python train.py \
-  --model-id paper_ir \
+  --model-id gru_ir_96_64 \
   --maestro-root data/maestro-v3.0.0 \
   --cache-dir cache/maestro-v3.0.0 \
-  --experiment-dir runs/paper_ir \
+  --experiment-dir runs/gru_ir_96_64 \
   --prepare --device cuda --amp
 ```
 
 四个 ID 的结构、损失和标准训练默认值固定在
-`ddsp_piano/model-suite-v1.0.0.json`。`--epochs`、`--steps-per-epoch`、`--batch-size`、
+`ddsp_piano/model-suite-v1.0.1.json`。`--epochs`、`--steps-per-epoch`、`--batch-size`、
 `--lr` 和 `--seed` 可显式覆盖；checkpoint 会保存最终有效配置。
 
 质量优先完整重训使用独立候选注册表，不修改稳定版本：
@@ -80,9 +81,9 @@ python scripts/train_model_suite.py
 
 ```bash
 python scripts/export_onnx.py \
-  --model-id paper_ir \
-  --checkpoint runs/paper_ir/checkpoints/best.pt \
-  --output artifacts/model-suite-v1.0.0/ddsp_piano_paper_ir.onnx \
+  --model-id gru_ir_96_64 \
+  --checkpoint runs/gru_ir_96_64/checkpoints/best.pt \
+  --output artifacts/model-suite-v1.0.1/ddsp_piano_gru_ir_96_64.onnx \
   --verify-steps 100
 ```
 

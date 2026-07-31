@@ -139,7 +139,7 @@ class ListeningTest(unittest.TestCase):
             )
             self.assertIn(first_deadline, page)
 
-    def test_untouched_default_ratings_do_not_count_as_scores(self) -> None:
+    def test_preference_only_results_do_not_count_dimension_scores(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
             review = create_listening_package(
@@ -161,12 +161,6 @@ class ListeningTest(unittest.TestCase):
                     {
                         "trial_id": trial_id,
                         "preference": candidate_side,
-                        "ratings": {name: {"A": 3, "B": 3} for name in DIMENSIONS},
-                        "rating_touched": {
-                            name: {"A": False, "B": False} for name in DIMENSIONS
-                        },
-                        "severe_artifact": {"A": False, "B": False},
-                        "notes": "",
                     }
                 )
             scores = output / "scores.json"
@@ -197,6 +191,22 @@ class ListeningTest(unittest.TestCase):
                     for count in finalized["human_review"]["dimension_rating_counts"].values()
                 )
             )
+
+    def test_listening_page_only_exposes_preference_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            create_listening_package(
+                output, "preference-ui", [self._item()], 30, -23.0, -3.0
+            )
+            page = (output / "listening" / "index.html").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("更喜欢 A", page)
+            self.assertIn("无明显差别", page)
+            self.assertIn("更喜欢 B", page)
+            self.assertNotIn('type="range"', page)
+            self.assertNotIn("严重缺陷", page)
+            self.assertNotIn("rating_touched", page)
 
 
 if __name__ == "__main__":

@@ -753,11 +753,11 @@ def main() -> int:
         type=Path,
         help="Explicit ONNX path for a non-release diagnostic model",
     )
-    parser.add_argument("--model-id", default="paper_ir")
+    parser.add_argument("--model-id", default="gru_ir_96_64")
     parser.add_argument(
         "--artifacts-dir",
         type=Path,
-        default=Path("artifacts/model-suite-v1.0.0"),
+        default=Path("artifacts/model-suite-v1.0.1"),
     )
     parser.add_argument(
         "--metadata",

@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_REGISTRY_PATH = Path(__file__).with_name("model-suite-v1.0.0.json")
+DEFAULT_REGISTRY_PATH = Path(__file__).with_name("model-suite-v1.0.1.json")
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,13 @@ class ModelRegistry:
         }
         if len({spec.asset_basename for spec in self.models.values()}) != len(self.models):
             raise ValueError("Model asset basenames must be unique")
+        self.default_model_id = str(
+            payload.get("default_model_id", next(iter(self.models)))
+        )
+        if self.default_model_id not in self.models:
+            raise ValueError(
+                f"Default model ID {self.default_model_id!r} is not in the registry"
+            )
 
     def require(self, model_id: str) -> ModelSpec:
         if model_id in self.legacy_names:

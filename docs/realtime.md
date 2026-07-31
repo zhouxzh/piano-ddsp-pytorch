@@ -5,8 +5,8 @@
 
 ```bash
 python scripts/realtime_midi_server.py \
-  --artifacts-dir artifacts/model-suite-v1.0.0 \
-  --model-id paper_ir \
+  --artifacts-dir artifacts/model-suite-v1.0.1 \
+  --model-id gru_ir_96_64 \
   --midi-dir midi \
   --host 0.0.0.0 --port 8765
 ```

@@ -7,7 +7,7 @@
   Ascend 310B OM、相邻合同 JSON、可续训 checkpoint、模型卡、验证报告和校验清单。
 
 模型文件只在 HF 维护权威副本。两个仓库使用相同的版本名，例如
-`model-suite-v1.0.0`。发布后禁止覆盖标签；修正模型或合同必须发布新版本。
+`model-suite-v1.0.1`。发布后禁止覆盖标签；修正模型或合同必须发布新版本。
 
 ## 首次建仓
 
@@ -16,7 +16,7 @@
 全文和 `THIRD_PARTY_NOTICES.md`；本代码仓库新增代码仍按根目录的 MIT 声明发布。
 
 仓库名绑定 Ascend 310 产品系列，但不绑定中间或最终文件格式。当前
-`model-suite-v1.0.0` 只发布本仓库完成 CPU/ONNX Runtime 验证的 ONNX 转换输入，
+`model-suite-v1.0.1` 只发布本仓库完成 CPU/ONNX Runtime 验证的 ONNX 转换输入，
 硬件合同仍明确限定为 Ascend 310B，`om_status` 保持 `pending`。未来 OM 必须由下游部署仓库
 完成指定 CANN 版本、Ascend 310B 算子、内存、数值和实时性能验证后，以新标签和独立机器可读
 合同发布；不得覆盖现有 ONNX 标签，也不得沿用 ONNX 验证结果宣称 OM 已验证。
@@ -54,31 +54,19 @@ hf auth whoami
 python scripts/stage_hf_release.py \
   --repo-id zhouxzh/piano-ddsp-ascend310
 HF_ENDPOINT=https://huggingface.co hf upload zhouxzh/piano-ddsp-ascend310 \
-  artifacts/hf-upload/model-suite-v1.0.0 \
-  --commit-message "Release model-suite-v1.0.0"
+  artifacts/hf-upload/model-suite-v1.0.1 \
+  --commit-message "Release model-suite-v1.0.1"
 HF_ENDPOINT=https://huggingface.co hf repos tag create \
-  zhouxzh/piano-ddsp-ascend310 model-suite-v1.0.0 \
+  zhouxzh/piano-ddsp-ascend310 model-suite-v1.0.1 \
   --message "Verified four-model ONNX suite"
 HF_ENDPOINT=https://huggingface.co hf download zhouxzh/piano-ddsp-ascend310 \
-  --revision model-suite-v1.0.0 \
-  --local-dir artifacts/hf-verify/model-suite-v1.0.0
+  --revision model-suite-v1.0.1 \
+  --local-dir artifacts/hf-verify/model-suite-v1.0.1
 ```
 
 上传目录只能由 staging 脚本从已验证发布目录生成。不要把 MAESTRO 数据、本地 MIDI、训练日志、
 试听 WAV、缓存或服务器绝对路径上传到模型仓库。
 
-`model-suite-v1.1.0-rc1` 在训练结束后仍是人工评测候选。只有四个自动报告都通过且人工结果完成后，
-才能暂存并上传；流水线本身不会执行这些命令：
-
-```bash
-python scripts/stage_hf_release.py \
-  --repo-id zhouxzh/piano-ddsp-ascend310 \
-  --release-dir artifacts/model-suite-v1.1.0-rc1 \
-  --output-dir artifacts/hf-upload/model-suite-v1.1.0-rc1
-HF_ENDPOINT=https://huggingface.co hf upload zhouxzh/piano-ddsp-ascend310 \
-  artifacts/hf-upload/model-suite-v1.1.0-rc1 \
-  --commit-message "Release model-suite-v1.1.0" --create-pr
-```
-
-先通过 HF PR 检查附件和许可证，再合并并建立正式的 `model-suite-v1.1.0` 标签。候选或失败权重
-不得覆盖 `v1.0.0`，也不得根据 ONNX 验证声称已经完成 OM/CANN 验证。
+`model-suite-v1.1.0-rc1` 已完成训练，但没有通过自动指标和人工偏好门槛，因此不得暂存、上传或建立
+HF 标签。其本地资产和发布索引仅用于复现实验；候选或失败权重不得覆盖 `v1.0.1`，也不得根据
+ONNX 验证声称已经完成 OM/CANN 验证。

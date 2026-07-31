@@ -33,7 +33,7 @@ from ddsp_piano.model_registry import load_model_registry
 
 
 WEB_ROOT = ROOT / "web" / "realtime_midi"
-DEFAULT_ARTIFACTS_DIR = ROOT / "artifacts" / "model-suite-v1.0.0"
+DEFAULT_ARTIFACTS_DIR = ROOT / "artifacts" / "model-suite-v1.0.1"
 DEFAULT_MIDI_DIR = ROOT / "midi"
 
 
@@ -94,7 +94,7 @@ class ClientSession:
         self._midi_tempo_scale = 1.0
         self._midi_loop = False
         self._midi_state = "stopped"
-        self.model_id = getattr(config, "default_model_id", "paper_ir")
+        self.model_id = getattr(config, "default_model_id", "gru_ir_96_64")
 
     async def start(self, model_id: str, piano_model: int, server_gain: float) -> None:
         await self.stop(notify=False)
@@ -669,7 +669,10 @@ def _load_midi_catalog(midi_dir: Path) -> dict[str, MidiCatalogEntry]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts-dir", type=Path, default=DEFAULT_ARTIFACTS_DIR)
-    parser.add_argument("--model-id", default="paper_ir")
+    parser.add_argument(
+        "--model-id",
+        help="Initial model ID; defaults to the registry's default_model_id",
+    )
     parser.add_argument("--midi-dir", type=Path, default=DEFAULT_MIDI_DIR)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
@@ -704,7 +707,7 @@ def main() -> None:
     if not WEB_ROOT.is_dir():
         raise FileNotFoundError(f"Browser application not found: {WEB_ROOT}")
     registry = load_model_registry()
-    default_spec = registry.require(args.model_id)
+    default_spec = registry.require(args.model_id or registry.default_model_id)
     artifacts_dir = args.artifacts_dir.resolve()
     models: dict[str, ModelAsset] = {}
     for model_id, spec in registry.models.items():

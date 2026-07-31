@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RELEASE = "model-suite-v1.0.0"
+DEFAULT_RELEASE = "model-suite-v1.0.1"
 
 
 def sha256_file(path: Path) -> str:

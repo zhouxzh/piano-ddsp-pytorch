@@ -139,6 +139,68 @@ def _evaluate_model_segments(
     samples_per_frame = sample_rate // frame_rate
     segment_frames = int(corpus["preprocess"]["segment_seconds"] * frame_rate)
     segment_samples = segment_frames * samples_per_frame
+    if corpus["profile"] != "release":
+        context_frames = int(
+            round(float(config["screening"]["context_seconds"]) * frame_rate)
+        )
+        results = []
+        cache_arrays: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+        for segment_number, entry in enumerate(corpus["entries"], start=1):
+            cache_name = entry["cache_path"]
+            if cache_name not in cache_arrays:
+                cache_path = Path(cache_name)
+                cache_arrays[cache_name] = (
+                    np.load(cache_path / "audio.npy", mmap_mode="r"),
+                    np.load(cache_path / "conditioning.npy", mmap_mode="r"),
+                    np.load(cache_path / "pedal.npy", mmap_mode="r"),
+                )
+            audio, conditioning_source, pedal_source = cache_arrays[cache_name]
+            frame_start = int(entry["frame_start"])
+            window_start = max(0, frame_start - context_frames)
+            window_end = frame_start + segment_frames
+            conditioning = np.asarray(
+                conditioning_source[window_start:window_end], dtype=np.float32
+            )
+            pedal = np.asarray(pedal_source[window_start:window_end], dtype=np.float32)
+            print(
+                f"Evaluation segment {segment_number}/{len(corpus['entries'])}: {entry['id']}",
+                flush=True,
+            )
+            signals = _render_track(
+                model_path,
+                metadata,
+                conditioning,
+                pedal,
+                int(entry["piano_model"]),
+                config,
+            )
+            offset_samples = (frame_start - window_start) * samples_per_frame
+            signal_slice = {
+                name: value[offset_samples : offset_samples + segment_samples]
+                for name, value in signals.items()
+            }
+            sample_start = int(entry["sample_start"])
+            target = np.asarray(
+                audio[sample_start : sample_start + segment_samples], dtype=np.float32
+            )
+            results.append(
+                {
+                    "id": entry["id"],
+                    "track_id": entry["track_id"],
+                    "year": entry["year"],
+                    "category": entry["category"],
+                    "frame_start": entry["frame_start"],
+                    "audio_metrics": audio_metrics(
+                        signal_slice["wet"],
+                        target,
+                        sample_rate,
+                        config["metrics"]["fft_sizes"],
+                    ),
+                    "signal_metrics": signal_metrics(signal_slice),
+                }
+            )
+        return sorted(results, key=lambda entry: entry["id"])
+
     by_track: dict[str, list[dict]] = defaultdict(list)
     for entry in corpus["entries"]:
         by_track[entry["cache_path"]].append(entry)
@@ -656,12 +718,12 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--prepare-missing", action="store_true")
 
     run = commands.add_parser("run", help="Evaluate one ONNX candidate against a baseline")
-    run.add_argument("--baseline-id", default="paper_ir")
+    run.add_argument("--baseline-id", default="gru_ir_96_64")
     run.add_argument("--candidate-id", required=True)
     run.add_argument(
         "--artifacts-dir",
         type=Path,
-        default=ROOT / "artifacts" / "model-suite-v1.0.0",
+        default=ROOT / "artifacts" / "model-suite-v1.0.1",
     )
     run.add_argument(
         "--baseline-artifacts-dir",

@@ -19,7 +19,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for model_id in paper_ir film_fdn calibrated_ir calibrated_film_ir; do
+          for model_id in \
+            gru_ir_96_64 \
+            film_fdn_128_96 \
+            gru_ir_fullwet_96_64 \
+            film_ir_fullwet_96_64; do
             python scripts/make_smoke_checkpoint.py \
               --model-id "${model_id}" \
               --output "artifacts/smoke/${model_id}.pt"

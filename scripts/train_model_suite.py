@@ -76,7 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--midi-dir", type=Path, default=ROOT / "midi")
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--run-root", type=Path, default=ROOT / "runs/model-suite-v1.1.0-rc1")
-    parser.add_argument("--baseline-dir", type=Path, default=ROOT / "artifacts/model-suite-v1.0.0")
+    parser.add_argument("--baseline-dir", type=Path, default=ROOT / "artifacts/model-suite-v1.0.1")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--memory-limit-gib", type=float, default=26.0)
@@ -89,15 +89,15 @@ def parse_args() -> argparse.Namespace:
 def stage_plan(registry: dict) -> list[tuple[str, str, dict, tuple[str, str] | None]]:
     models = registry["models"]
     plan: list[tuple[str, str, dict, tuple[str, str] | None]] = []
-    for model_id in ("paper_ir", "film_fdn", "calibrated_film_ir"):
+    for model_id in ("gru_ir_96_64", "film_fdn_128_96", "film_ir_fullwet_96_64"):
         parent = None
         for stage, settings in models[model_id]["training"]["stage_schedule"].items():
             plan.append((model_id, stage, settings, parent))
             parent = (model_id, stage)
-    calibrated = models["calibrated_ir"]["training"]["stage_schedule"]["calibrate"]
-    paper_refine = ("paper_ir", "refine")
+    calibrated = models["gru_ir_fullwet_96_64"]["training"]["stage_schedule"]["calibrate"]
+    paper_refine = ("gru_ir_96_64", "refine")
     paper_end = plan.index(next(item for item in plan if item[:2] == paper_refine)) + 1
-    plan.insert(paper_end, ("calibrated_ir", "calibrate", calibrated, paper_refine))
+    plan.insert(paper_end, ("gru_ir_fullwet_96_64", "calibrate", calibrated, paper_refine))
     return plan
 
 
@@ -336,10 +336,10 @@ def main() -> int:
         write_json(state_path, state)
 
     sources = {
-        "paper_ir": checkpoint_path(run_root, "paper_ir", "refine"),
-        "film_fdn": checkpoint_path(run_root, "film_fdn", "refine"),
-        "calibrated_ir": checkpoint_path(run_root, "calibrated_ir", "calibrate"),
-        "calibrated_film_ir": checkpoint_path(run_root, "calibrated_film_ir", "refine"),
+        "gru_ir_96_64": checkpoint_path(run_root, "gru_ir_96_64", "refine"),
+        "film_fdn_128_96": checkpoint_path(run_root, "film_fdn_128_96", "refine"),
+        "gru_ir_fullwet_96_64": checkpoint_path(run_root, "gru_ir_fullwet_96_64", "calibrate"),
+        "film_ir_fullwet_96_64": checkpoint_path(run_root, "film_ir_fullwet_96_64", "refine"),
     }
     candidate_dir = ROOT / "artifacts" / release
     release_manifest = candidate_dir / "model-suite.json"

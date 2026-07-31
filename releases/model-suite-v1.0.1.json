@@ -1,0 +1,111 @@
+{
+  "schema": "ddsp-piano-release/v1",
+  "release": "model-suite-v1.0.1",
+  "default_model_id": "gru_ir_96_64",
+  "deployment_contract": {
+    "dtype": "FP32",
+    "opset": 13,
+    "batch_size": 1,
+    "frames_per_call": 1,
+    "frame_rate": 250,
+    "sample_rate": 16000,
+    "audio_samples_per_call": 64,
+    "max_polyphony": 16,
+    "release_frames": 250,
+    "dsp_location": "host"
+  },
+  "models": {
+    "gru_ir_96_64": {
+      "display_name": "GRU IR 96/64",
+      "architecture": "paper",
+      "lineage": "lrenault/ddsp-piano ddsp_piano/configs/dafx22.gin",
+      "quality_status": "quality_selection_pending",
+      "assets": {
+        "ddsp_piano_gru_ir_96_64.pt": {
+          "bytes": 6292501,
+          "sha256": "ae70c5cfe14298dd12b43dd15b9bebd4811896941412efd5164aa0a50ce865b1"
+        },
+        "ddsp_piano_gru_ir_96_64.onnx": {
+          "bytes": 2198921,
+          "sha256": "a29921a93c419a9bd3f4c5d4462522c47196ddc0d0fd4ef3525b92b2158457ae"
+        },
+        "ddsp_piano_gru_ir_96_64.json": {
+          "bytes": 4781,
+          "sha256": "118661ff0bdbafe880d59626a90d096ce37f00c33645cbea66698ec8a2ca7d67"
+        }
+      },
+      "source_checkpoint_sha256": "68581701744c20b4e790915dacc4bd6639c417342f18151755250eeb889b26b3",
+      "model_state_sha256": "a67d4b2997dcbb4fdb154d0c05a6689d7a395e67c8c0138acc27358143535e09",
+      "published_checkpoint_sha256": "ae70c5cfe14298dd12b43dd15b9bebd4811896941412efd5164aa0a50ce865b1"
+    },
+    "film_fdn_128_96": {
+      "display_name": "FiLM FDN 128/96",
+      "architecture": "configurable",
+      "lineage": "lrenault/ddsp-piano ddsp_piano/configs/maestro-v2.gin",
+      "quality_status": "quality_selection_pending",
+      "assets": {
+        "ddsp_piano_film_fdn_128_96.pt": {
+          "bytes": 4273823,
+          "sha256": "019c415c638dc370d3b296a1f53b12bd8e4e39c29678c554a41c18be732c348b"
+        },
+        "ddsp_piano_film_fdn_128_96.onnx": {
+          "bytes": 1427834,
+          "sha256": "775450119a43d9f985f5012250c8fd04864af889aa6e094cccd01274594726ed"
+        },
+        "ddsp_piano_film_fdn_128_96.json": {
+          "bytes": 4899,
+          "sha256": "6ed595518a8964f495e740bccb7a0a9f99c59ce0d29c943be9a64c169da282aa"
+        }
+      },
+      "source_checkpoint_sha256": "fd0d60f2123ccd56fbc95e212e8ceb5a50f7c1a65eba317f69e70aabb9d9658b",
+      "model_state_sha256": "52e59e2f8bdffc8bd3d6b9a417d84d21b30fd41b6eefafc2418ba6dca5363b6b",
+      "published_checkpoint_sha256": "019c415c638dc370d3b296a1f53b12bd8e4e39c29678c554a41c18be732c348b"
+    },
+    "gru_ir_fullwet_96_64": {
+      "display_name": "GRU IR Full-Wet 96/64",
+      "architecture": "configurable",
+      "lineage": "gru_ir_96_64 initialized, perceptual calibration route",
+      "quality_status": "quality_selection_pending",
+      "assets": {
+        "ddsp_piano_gru_ir_fullwet_96_64.pt": {
+          "bytes": 4373597,
+          "sha256": "8a309d362305e886b863d779cce3b4fd0bb5f2044c28b983fb19fd2d5b26f6ff"
+        },
+        "ddsp_piano_gru_ir_fullwet_96_64.onnx": {
+          "bytes": 2198921,
+          "sha256": "650c35e0399af2619b712926d611618790eb525fcdf00b7068e0a0c206e0a9d5"
+        },
+        "ddsp_piano_gru_ir_fullwet_96_64.json": {
+          "bytes": 5519,
+          "sha256": "c3bc811f3e3a1fccfc7b6a66ec3a97f0c83e76cc34b603e575f097a2345bb71b"
+        }
+      },
+      "source_checkpoint_sha256": "d32b6412a6dd93d32d8d091a9172a74d1a80e607b29da4f4f81a6e0bd066ea86",
+      "model_state_sha256": "35e3885e7a859953d704dbf8f789a5f6b1dadb9c120816c0ad00527254598414",
+      "published_checkpoint_sha256": "8a309d362305e886b863d779cce3b4fd0bb5f2044c28b983fb19fd2d5b26f6ff"
+    },
+    "film_ir_fullwet_96_64": {
+      "display_name": "FiLM IR Full-Wet 96/64",
+      "architecture": "configurable",
+      "lineage": "MAESTRO v2 structure modified for 96/64 learned-IR synthesis",
+      "quality_status": "quality_selection_pending",
+      "assets": {
+        "ddsp_piano_film_ir_fullwet_96_64.pt": {
+          "bytes": 7125043,
+          "sha256": "eda9ca694cce9847952db281104703dbdfe909107f678fc734fe0ae54e726f9b"
+        },
+        "ddsp_piano_film_ir_fullwet_96_64.onnx": {
+          "bytes": 2466984,
+          "sha256": "3d217c9858df3d4146ea00d350ea695a192f79e6c237929be15fc3882d989d38"
+        },
+        "ddsp_piano_film_ir_fullwet_96_64.json": {
+          "bytes": 5597,
+          "sha256": "bf8ef813ebdc4a9b3fb222c8182ad330b1e69e299745be58d47096d83cf573f8"
+        }
+      },
+      "source_checkpoint_sha256": "d328f72f954e35cb17efe68cc617014de99dfc6b1784127e881e5c6aa7e86582",
+      "model_state_sha256": "4d0bb25bee06fbdb2b39ada067dab6fe4924b75c06e93c01cdc19192f1a0981b",
+      "published_checkpoint_sha256": "eda9ca694cce9847952db281104703dbdfe909107f678fc734fe0ae54e726f9b"
+    }
+  }
+}
